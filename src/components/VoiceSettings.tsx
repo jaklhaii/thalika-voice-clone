@@ -3,6 +3,7 @@
 import { Gauge, Mic2, Plus, RefreshCw, Save, Server, Settings, SlidersHorizontal, Trash2, UploadCloud, Wand2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { assessReferenceAudio } from "@/lib/reference-audio-quality";
+import { StatusDot, type StatusTone } from "@/components/StatusDot";
 import type { BurmeseLexiconEntry, CloneMode, ReferenceAudioPayload, ReferenceQualityReport, VoiceEmotion, VoiceProfileSummary, VoiceProvider } from "@/lib/types";
 
 export type ProviderHealthStatus = "connected" | "timeout" | "rate_limited" | "unavailable" | "invalid_response";
@@ -71,6 +72,16 @@ const healthClassName: Record<ProviderHealthStatus, string> = {
   rate_limited: "border-amber-300/45 bg-amber-400/10 text-amber-800",
   unavailable: "border-red-300/50 bg-red-400/10 text-red-700",
   invalid_response: "border-red-300/50 bg-red-400/10 text-red-700"
+};
+
+// Tone + pulse for the StatusDot alongside the health badge. Transient states pulse (the endpoint
+// is reachable but degraded — retrying); settled states are steady; failures are steady red.
+const healthTone: Record<ProviderHealthStatus, { tone: StatusTone; pulse: boolean }> = {
+  connected: { tone: "success", pulse: false },
+  timeout: { tone: "warning", pulse: true },
+  rate_limited: { tone: "warning", pulse: true },
+  unavailable: { tone: "danger", pulse: false },
+  invalid_response: { tone: "danger", pulse: false }
 };
 
 export function VoiceSettings({
@@ -252,11 +263,27 @@ export function VoiceSettings({
                 </span>
                 <div className="flex items-center gap-2">
                   <span
-                    className={`rounded-full border px-3 py-1 text-xs font-semibold ${providerHealth
-                        ? healthClassName[providerHealth.status]
-                        : "border-slate-300 bg-slate-100 text-slate-600"
-                      }`}
+                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs font-semibold ${providerHealth
+                      ? healthClassName[providerHealth.status]
+                      : "border-slate-300 bg-slate-100 text-slate-600"
+                    }`}
                   >
+                    <StatusDot
+                      tone={
+                        providerHealthLoading
+                          ? "warning"
+                          : providerHealth
+                            ? healthTone[providerHealth.status].tone
+                            : "idle"
+                      }
+                      pulse={
+                        providerHealthLoading
+                          ? true
+                          : providerHealth
+                            ? healthTone[providerHealth.status].pulse
+                            : false
+                      }
+                    />
                     {providerHealthLoading
                       ? "Checking..."
                       : providerHealth
@@ -297,7 +324,17 @@ export function VoiceSettings({
               </div>
               {localStatus.configured && (
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-xs font-medium text-studio-muted">
+                  <span className="inline-flex items-center gap-2 text-xs font-medium text-studio-muted">
+                    <StatusDot
+                      tone={
+                        localStatus.reachable
+                          ? "success"
+                          : localStatus.running
+                            ? "warning"
+                            : "idle"
+                      }
+                      pulse={!localStatus.reachable && localStatus.running}
+                    />
                     Local server: {localStatus.reachable ? "running" : localStatus.running ? "starting…" : "stopped"}
                   </span>
                   <button type="button" disabled={endpointSaving || localStatus.reachable || localStatus.running} onClick={() => void startLocal()} className="studio-soft-chip-bg rounded-full border border-white/10 px-3 py-1 text-xs font-semibold text-studio-text disabled:opacity-45">Start</button>
