@@ -56,15 +56,91 @@ export function StatusPanel({ status, error, completedChunks, totalChunks, progr
         {status === "failed" && (error || "Something went wrong.")}
       </p>
       {showProgress && (
-        <div className="mt-3 grid gap-1.5">
-          <div className="h-2 overflow-hidden rounded-full bg-studio-border">
-            <div className="h-full rounded-full bg-studio-accent transition-[width] duration-300" style={{ width: `${percent}%` }} />
-          </div>
-          <span className="text-xs font-medium text-studio-muted">
-            Segment {Math.min(completed + 1, total)} of {total} · {percent}%
-          </span>
-        </div>
+        <ChunkProgress completed={completed} total={total} percent={percent} />
       )}
     </section>
   );
+}
+
+// Visual chunk cells: each chunk is one cell whose state is derived from the counts. This is the
+// "motion-as-teaching" layer — you see *which* chunk is in flight at a glance, instead of parsing
+// "Segment 3 of 5". The precise text caption is kept below it for screen readers + exact reading.
+//
+// State derivation (no new props needed):
+//   - index < completed            -> done (filled)
+//   - index === completed          -> in flight (pulsing)
+//   - index > completed            -> queued (faint)
+// Only renders during `generating`; on failure the panel's error text takes over instead.
+//
+// Cap visible cells at 12 so a 50-chunk script doesn't render 50 cells. Past the cap we render
+// proportional grouped segments (still visually informative, no layout blowup). Respects
+// prefers-reduced-motion: the in-flight pulse collapses to a steady accent fill.
+const MAX_VISIBLE_CELLS = 12;
+
+interface ChunkProgressProps {
+  completed: number;
+  total: number;
+  percent: number;
+}
+
+function ChunkProgress({ completed, total, percent }: ChunkProgressProps) {
+  // Build the per-chunk state list, then down-sample to MAX_VISIBLE_CELLS if needed.
+  type CellState = "done" | "active" | "queued";
+  const fullStates: CellState[] = [];
+  for (let i = 0; i < total; i += 1) {
+    if (i < completed) fullStates.push("done");
+    else if (i === completed) fullStates.push("active");
+    else fullStates.push("queued");
+  }
+
+  const cells = downsampleStates(fullStates, MAX_VISIBLE_CELLS);
+
+  return (
+    <div className="mt-4 grid gap-2">
+      <div className="flex gap-1.5" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100} aria-label={`Segment ${Math.min(completed + 1, total)} of ${total}`}>
+        {cells.map((state, index) => (
+          <span
+            key={index}
+            title={cellTitle(state)}
+            className={`h-2.5 flex-1 rounded-full transition-colors duration-300 ${cellClassName(state)}`}
+          />
+        ))}
+      </div>
+      <span className="text-xs font-medium text-studio-muted">
+        Segment {Math.min(completed + 1, total)} of {total} · {percent}%
+      </span>
+    </div>
+  );
+}
+
+function cellClassName(state: "done" | "active" | "queued") {
+  if (state === "done") return "bg-studio-accent";
+  if (state === "active") {
+    // Pulses under normal motion; holds a steady strong accent when the user prefers reduced motion.
+    return "bg-studio-accent/50 motion-safe:animate-pulse";
+  }
+  return "bg-studio-border";
+}
+
+function cellTitle(state: "done" | "active" | "queued") {
+  if (state === "done") return "Done";
+  if (state === "active") return "Generating";
+  return "Queued";
+}
+
+// Down-sample a state list to at most `max` cells by merging neighbors. The merge rule preserves
+// the worst (most-progressed) state in each bucket so the in-flight cell is never hidden: a bucket
+// containing any "active" reads as active; else any "done" reads as done; else queued.
+function downsampleStates(states: ("done" | "active" | "queued")[], max: number) {
+  if (states.length <= max) return states;
+
+  const out: ("done" | "active" | "queued")[] = [];
+  const bucketSize = states.length / max;
+  for (let i = 0; i < max; i += 1) {
+    const start = Math.floor(i * bucketSize);
+    const end = Math.max(start + 1, Math.floor((i + 1) * bucketSize));
+    const bucket = states.slice(start, end);
+    out.push(bucket.includes("active") ? "active" : bucket.includes("done") ? "done" : "queued");
+  }
+  return out;
 }
