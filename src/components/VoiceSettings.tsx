@@ -1,6 +1,6 @@
 "use client";
 
-import { Gauge, Mic2, Plus, RefreshCw, Save, Server, Settings, SlidersHorizontal, Trash2, UploadCloud, Wand2, X } from "lucide-react";
+import { Gauge, Plus, RefreshCw, Save, Server, Settings, SlidersHorizontal, Trash2, UploadCloud, Wand2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { assessReferenceAudio } from "@/lib/reference-audio-quality";
 import { StatusDot, type StatusTone } from "@/components/StatusDot";
@@ -246,17 +246,8 @@ export function VoiceSettings({
         </div> */}
 
         {isCloneProvider && (
-          <div className="studio-nested-card-bg grid gap-3 rounded-[1.8rem] border border-white/10 p-4">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="inline-flex items-center gap-2 rounded-full border border-studio-accent/30 bg-studio-accent/10 px-3 py-1 text-xs font-semibold text-emerald-800">
-                <Mic2 size={13} /> VoxCPM2 multilingual inference
-              </span>
-              <span className="rounded-full border border-amber-300/45 bg-amber-400/10 px-3 py-1 text-xs font-semibold text-amber-700">
-                Public shared inference may be slow
-              </span>
-            </div>
-
-            <div className="studio-control-bg grid gap-2 rounded-2xl border border-white/10 p-3">
+          <div className="grid gap-4">
+            <section className="grid gap-3 border-t border-studio-border/40 pt-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="inline-flex items-center gap-2 text-sm font-semibold text-studio-text">
                   <Server size={15} /> VoxCPM endpoint
@@ -342,7 +333,7 @@ export function VoiceSettings({
                 </div>
               )}
               {endpointNote && <p className="text-xs leading-5 text-studio-muted">{endpointNote}</p>}
-            </div>
+            </section>
 
             <div className="flex gap-2">
               <button type="button" onClick={() => onVoiceModeChange("clone")} className={`flex-1 rounded-full border px-3 py-1.5 text-xs font-semibold ${voiceMode === "clone" ? "border-studio-accent bg-studio-accent/10 text-emerald-800" : "border-white/10 text-studio-muted"}`}>Clone a voice</button>
@@ -386,7 +377,7 @@ export function VoiceSettings({
             </p>
 
             {(referenceAudio || selectedProfileId) && (
-              <div className="studio-control-bg grid gap-2 rounded-2xl border border-white/10 p-3">
+              <div className="grid gap-2">
                 <div className="flex items-center justify-between gap-3 text-sm">
                   <span className="inline-flex items-center gap-2 font-medium text-studio-muted"><Gauge size={15} /> Reference quality</span>
                   <span className="font-semibold text-studio-text">{referenceQualityReport?.score ?? referenceAssessment.score}/100</span>
@@ -407,7 +398,7 @@ export function VoiceSettings({
             </label>
 
             {referenceAudio && !selectedProfileId && (
-              <div className="studio-control-bg grid gap-2 rounded-2xl border border-white/10 p-3">
+              <div className="grid gap-2">
                 <input value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder="Optional local profile name" className="rounded-xl border border-studio-border bg-white/60 px-3 py-2 text-sm text-studio-text outline-none" />
                 <label className="flex items-start gap-2 text-xs leading-5 text-studio-muted">
                   <input type="checkbox" checked={profileConsent} onChange={(event) => setProfileConsent(event.target.checked)} className="mt-1 h-4 w-4 accent-studio-accent" />
@@ -428,7 +419,7 @@ export function VoiceSettings({
         )}
 
         {isCloneProvider && (
-          <details className="studio-nested-card-bg rounded-[1.8rem] border border-white/10 p-4">
+          <details className="border-t border-studio-border/40 pt-4">
             <summary className="cursor-pointer text-sm font-semibold text-studio-text">Advanced tuning</summary>
             <div className="mt-4 grid gap-4">
               <label className="grid gap-2 text-sm font-medium text-studio-muted">
@@ -475,7 +466,7 @@ export function VoiceSettings({
               </label>
 
               <div className="grid gap-3 text-sm text-studio-muted">
-                <label className="studio-control-bg flex items-center justify-between gap-3 rounded-2xl border border-white/10 px-3 py-2">
+                <label className="flex items-center justify-between gap-3 px-1 py-1.5">
                   <span>Reference denoise</span>
                   <input
                     type="checkbox"
@@ -484,7 +475,7 @@ export function VoiceSettings({
                     className="h-4 w-4 accent-studio-accent"
                   />
                 </label>
-                <label className="studio-control-bg flex items-center justify-between gap-3 rounded-2xl border border-white/10 px-3 py-2">
+                <label className="flex items-center justify-between gap-3 px-1 py-1.5">
                   <span>Text normalization</span>
                   <input
                     type="checkbox"
@@ -493,7 +484,7 @@ export function VoiceSettings({
                     className="h-4 w-4 accent-studio-accent"
                   />
                 </label>
-                <label className="grid gap-3 text-sm font-medium text-studio-muted px-3 py-2">
+                <label className="grid gap-3 text-sm font-medium text-studio-muted px-1 py-1.5">
                   <span className="flex justify-between">
                     Speed <span className="text-studio-text">{speed.toFixed(1)}x</span>
                   </span>
