@@ -25,7 +25,7 @@ export function StatusPanel({ status, error, completedChunks, totalChunks, progr
   const total = totalChunks ?? 0;
   const completed = completedChunks ?? 0;
   const percent = total > 0 ? Math.min(100, Math.round((completed / total) * 100)) : 0;
-  const showProgress = status === "generating" && total > 0;
+  const showProgress = (status === "generating" || status === "failed") && total > 0;
 
   return (
     <section className="studio-card-bg rounded-[2.2rem] border border-white/10 p-5">
@@ -56,7 +56,7 @@ export function StatusPanel({ status, error, completedChunks, totalChunks, progr
         {status === "failed" && (error || "Something went wrong.")}
       </p>
       {showProgress && (
-        <ChunkProgress completed={completed} total={total} percent={percent} />
+        <ChunkProgress completed={completed} total={total} percent={percent} failed={status === "failed"} />
       )}
     </section>
   );
@@ -81,23 +81,27 @@ interface ChunkProgressProps {
   completed: number;
   total: number;
   percent: number;
+  failed?: boolean;
 }
 
-function ChunkProgress({ completed, total, percent }: ChunkProgressProps) {
+function ChunkProgress({ completed, total, percent, failed }: ChunkProgressProps) {
   // Build the per-chunk state list, then down-sample to MAX_VISIBLE_CELLS if needed.
-  type CellState = "done" | "active" | "queued";
+  // On failure, the in-flight chunk (index === completed) is marked "failed" so you can SEE which
+  // segment broke instead of just reading the error text. Done/queued chunks keep their states.
+  type CellState = "done" | "active" | "failed" | "queued";
   const fullStates: CellState[] = [];
   for (let i = 0; i < total; i += 1) {
     if (i < completed) fullStates.push("done");
-    else if (i === completed) fullStates.push("active");
+    else if (i === completed) fullStates.push(failed ? "failed" : "active");
     else fullStates.push("queued");
   }
 
   const cells = downsampleStates(fullStates, MAX_VISIBLE_CELLS);
+  const failingSegment = Math.min(completed + 1, total);
 
   return (
     <div className="mt-4 grid gap-2">
-      <div className="flex gap-1.5" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100} aria-label={`Segment ${Math.min(completed + 1, total)} of ${total}`}>
+      <div className="flex gap-1.5" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100} aria-label={failed ? `Failed at segment ${failingSegment} of ${total}` : `Segment ${failingSegment} of ${total}`}>
         {cells.map((state, index) => (
           <span
             key={index}
@@ -106,41 +110,51 @@ function ChunkProgress({ completed, total, percent }: ChunkProgressProps) {
           />
         ))}
       </div>
-      <span className="text-xs font-medium text-studio-muted">
-        Segment {Math.min(completed + 1, total)} of {total} · {percent}%
+      <span className={`text-xs font-medium ${failed ? "text-red-600" : "text-studio-muted"}`}>
+        {failed ? `Failed at segment ${failingSegment} of ${total}` : `Segment ${failingSegment} of ${total} · ${percent}%`}
       </span>
     </div>
   );
 }
 
-function cellClassName(state: "done" | "active" | "queued") {
+function cellClassName(state: "done" | "active" | "failed" | "queued") {
   if (state === "done") return "bg-studio-accent";
   if (state === "active") {
     // Pulses under normal motion; holds a steady strong accent when the user prefers reduced motion.
     return "bg-studio-accent/50 motion-safe:animate-pulse";
   }
+  if (state === "failed") return "bg-red-500";
   return "bg-studio-border";
 }
 
-function cellTitle(state: "done" | "active" | "queued") {
+function cellTitle(state: "done" | "active" | "failed" | "queued") {
   if (state === "done") return "Done";
   if (state === "active") return "Generating";
+  if (state === "failed") return "Failed";
   return "Queued";
 }
 
 // Down-sample a state list to at most `max` cells by merging neighbors. The merge rule preserves
-// the worst (most-progressed) state in each bucket so the in-flight cell is never hidden: a bucket
-// containing any "active" reads as active; else any "done" reads as done; else queued.
-function downsampleStates(states: ("done" | "active" | "queued")[], max: number) {
+// the most informative state in each bucket so the in-flight/failed cell is never hidden:
+// "failed" beats "active" beats "done" beats "queued".
+function downsampleStates(states: ("done" | "active" | "failed" | "queued")[], max: number) {
   if (states.length <= max) return states;
 
-  const out: ("done" | "active" | "queued")[] = [];
+  const out: ("done" | "active" | "failed" | "queued")[] = [];
   const bucketSize = states.length / max;
   for (let i = 0; i < max; i += 1) {
     const start = Math.floor(i * bucketSize);
     const end = Math.max(start + 1, Math.floor((i + 1) * bucketSize));
     const bucket = states.slice(start, end);
-    out.push(bucket.includes("active") ? "active" : bucket.includes("done") ? "done" : "queued");
+    out.push(
+      bucket.includes("failed")
+        ? "failed"
+        : bucket.includes("active")
+          ? "active"
+          : bucket.includes("done")
+            ? "done"
+            : "queued"
+    );
   }
   return out;
 }
