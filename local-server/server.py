@@ -41,6 +41,15 @@ except Exception as exc:  # noqa: BLE001 - surface a clear startup failure
     print(f"[thalika-local] FATAL: could not load VoxCPM2: {exc}", file=sys.stderr, flush=True)
     raise
 
+# Warm the generate path BEFORE serving so the first real request isn't a cold take (MPS lazy
+# init / first-pass artifacts the user hears as noise on chunk 1). Output discarded.
+try:
+    print("[thalika-local] warmup ...", flush=True)
+    model.generate(text="warm up", cfg_value=2.0, inference_timesteps=4)
+    print("[thalika-local] warmup done.", flush=True)
+except Exception as exc:  # noqa: BLE001 - warmup is best-effort
+    print(f"[thalika-local] warmup skipped: {exc}", file=sys.stderr, flush=True)
+
 
 def generate(text, control, audio, use_prompt_text, prompt_text, cfg_value, normalize, denoise, inference_timesteps=None, retry_badcase=None):
     """Exposes the full VoxCPM2 surface via the app's 8-arg payload, plus local-only controls:
@@ -89,6 +98,10 @@ def generate(text, control, audio, use_prompt_text, prompt_text, cfg_value, norm
         "normalize": bool(normalize),
         "denoise": bool(denoise) and LOAD_DENOISER,
     }
+    # Tunable stability knob: lower ratio = retry more aggressively on degenerate takes (default 6.0).
+    ratio = os.environ.get("VOXCPM_RETRY_RATIO")
+    if ratio:
+        kwargs["retry_badcase_ratio_threshold"] = float(ratio)
     if ref_path:
         kwargs["reference_wav_path"] = ref_path
         if use_prompt_text and prompt_text and prompt_text.strip():
@@ -116,7 +129,6 @@ demo = gr.Interface(
         gr.Checkbox(label="normalize", value=True),
         gr.Checkbox(label="denoise", value=False),
         gr.Slider(4, 50, value=10, step=1, label="inference_timesteps"),
-        gr.Checkbox(label="retry_badcase", value=True),
     ],
     outputs=gr.Audio(label="output"),
     api_name="generate",
