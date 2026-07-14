@@ -53,6 +53,6 @@ export function assessReferenceAudio(referenceAudio?: Pick<ReferenceAudioPayload
   return {
     score: 30,
     label: "too_long",
-    message: "VoxCPM2 public Space rejects very long references. Trim to 6-30 seconds of clean speech."
+    message: "VoxCPM2 works best with a focused reference. Trim to 6-30 seconds of clean speech."
   };
 }

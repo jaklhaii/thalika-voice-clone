@@ -1,7 +1,9 @@
 import path from "node:path";
 import fs from "node:fs/promises";
 
-export const dataDir = path.join(process.cwd(), "data");
+// Local user data is runtime state, not a build input. Avoid tracing the entire checkout into
+// the production bundle while keeping every filesystem route scoped to this one directory.
+export const dataDir = path.join(/*turbopackIgnore: true*/ process.cwd(), "data");
 export const scriptsDir = path.join(dataDir, "scripts");
 export const jobsDir = path.join(dataDir, "jobs");
 export const outputsDir = path.join(dataDir, "outputs");

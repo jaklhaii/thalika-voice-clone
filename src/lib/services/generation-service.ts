@@ -79,6 +79,9 @@ async function runGeneration({ baseJob, effectiveInput, scriptId, title }: Gener
       ...baseJob,
       format: audio.format,
       status: "completed",
+      completedChunks: lastProgress?.totalChunks,
+      totalChunks: lastProgress?.totalChunks,
+      progressMessage: "Audio generation completed.",
       audioFile: audio.filename,
       rawAudioFile: audio.rawAudioFile,
       content: formatJobContent(provider.name, audio)
@@ -154,7 +157,9 @@ export async function startVoiceGeneration(input: GenerateVoiceRequest): Promise
     lexiconRevision: effectiveInput.lexiconRevision,
     normalizationChanges,
     referenceQualityScore: effectiveInput.referenceQualityReport?.score,
-    referenceTranscriptUsed: Boolean(effectiveInput.referenceText?.trim()),
+    // Reference text is stored as profile notes only. The provider intentionally uses isolated
+    // reference-audio cloning, so job metadata must not claim a transcript was sent.
+    referenceTranscriptUsed: false,
     createdAt
   };
 

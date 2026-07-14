@@ -4,23 +4,13 @@ import { openSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { dataDir, ensureDataDirs, logsDir } from "@/lib/file-utils";
-import { readEnvKey } from "@/lib/storage/env-store";
 
 export const runtime = "nodejs";
 
 const LOCAL_URL = "http://localhost:7860";
 const pidFile = path.join(dataDir, "voxcpm-local.pid");
-
-// Default launcher: the repo's own script that sets up the venv and runs local-server/server.py.
-// Resolved relative to the Next.js app root (process.cwd()), so it works on a fresh checkout.
-const DEFAULT_LOCAL_CMD = "bash scripts/voxcpm-local.sh";
-
-// Command comes ONLY from .env.local / env / this hard-coded default — NEVER the request body —
-// so a stray POST can't run arbitrary shell. The serving machine is the one that hosts VoxCPM.
-async function localCommand() {
-  const configured = (await readEnvKey("VOXCPM_LOCAL_CMD")) || process.env.VOXCPM_LOCAL_CMD?.trim() || "";
-  return configured || DEFAULT_LOCAL_CMD;
-}
+const projectRoot = process.cwd();
+const launcherPath = path.join(projectRoot, "scripts", "voxcpm-local.sh");
 
 async function readPid() {
   try {
@@ -54,9 +44,9 @@ async function reachable() {
 
 export async function GET() {
   const pid = await readPid();
-  const command = await localCommand();
+  const configured = await fs.access(launcherPath).then(() => true).catch(() => false);
   return NextResponse.json({
-    configured: Boolean(command),
+    configured,
     running: pid ? isAlive(pid) : false,
     reachable: await reachable()
   });
@@ -65,14 +55,12 @@ export async function GET() {
 export async function POST() {
   if (await reachable()) return NextResponse.json({ started: true, alreadyRunning: true });
 
-  const command = await localCommand();
-  // The command is always set (DEFAULT_LOCAL_CMD), so this only triggers on an explicit
-  // empty override. The launcher itself detects missing/incompatible Python and logs to
-  // data/logs/voxcpm-local.log — surface that path to the user.
-  if (!command) {
+  try {
+    await fs.access(launcherPath);
+  } catch {
     return NextResponse.json(
-      { ok: false, error: "No local VoxCPM launch command configured. See data/logs/voxcpm-local.log and local-server/README.md." },
-      { status: 400 }
+      { ok: false, error: "The tracked local VoxCPM2 launcher is missing. Reinstall the app." },
+      { status: 500 }
     );
   }
 
@@ -81,7 +69,11 @@ export async function POST() {
   // detached + own process group so Stop can kill the whole tree (sh -> python). Survives app
   // restarts; the pidfile is the only handle. Trusts the pidfile — a PID reused after a crash
   // could mistarget the kill; fine for a single local box, add a cmdline check if it bites.
-  const child = spawn(command, { shell: true, detached: true, stdio: ["ignore", logFd, logFd] });
+  const child = spawn("bash", [launcherPath], {
+    cwd: projectRoot,
+    detached: true,
+    stdio: ["ignore", logFd, logFd]
+  });
   child.unref();
   if (child.pid) await fs.writeFile(pidFile, String(child.pid), "utf8");
   return NextResponse.json({ started: true });

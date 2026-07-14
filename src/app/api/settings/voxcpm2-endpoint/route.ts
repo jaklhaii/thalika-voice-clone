@@ -6,7 +6,15 @@ import { getVoxCPM2BaseUrl } from "@/lib/providers/voxcpm2-health";
 export const runtime = "nodejs";
 
 const requestSchema = z.object({
-  baseUrl: z.string().trim().url("Enter a valid http(s) URL").max(300)
+  baseUrl: z
+    .string()
+    .trim()
+    .url("Enter a valid local http(s) URL")
+    .max(300)
+    .refine((value) => {
+      const hostname = new URL(value).hostname;
+      return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+    }, "Thalika production voice generation uses the local VoxCPM2 server")
 });
 
 export async function GET() {

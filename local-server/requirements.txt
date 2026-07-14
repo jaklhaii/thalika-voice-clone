@@ -1,7 +1,6 @@
 # VoxCPM2 local inference server.
 # Needs Python 3.10-3.12 (3.13+ is NOT supported by the voxcpm / torch stack).
-voxcpm
+voxcpm==2.0.3
 gradio>=4.0
 soundfile
 numpy
-hf_transfer  # robust/parallel/resumable HF downloads — stops the ~8GB model stalling at 0%

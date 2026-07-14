@@ -417,6 +417,102 @@ const MASTER_MAX_DATA_BYTES = 256 * 1024 * 1024;
 const SILENCE_THRESHOLD_RATIO = 0.015;
 // Always keep this much audio around the voiced region so a soft onset/tail is never clipped.
 const SILENCE_GUARD_MILLISECONDS = 25;
+// Chunk leveling is deliberately narrow. It removes obvious per-take volume jumps without
+// flattening intentional expression or lifting a noisy take aggressively.
+const CHUNK_LEVEL_MAX_ADJUSTMENT_DB = 3;
+
+export interface PcmChunkMetrics {
+  durationSeconds: number;
+  activeRmsDbfs: number;
+  peakDbfs: number;
+  activeRatio: number;
+}
+
+function dbfs(amplitude: number) {
+  return amplitude > 0 ? 20 * Math.log10(amplitude) : -Infinity;
+}
+
+export function measurePcm24Chunk(buffer: Buffer): PcmChunkMetrics {
+  const wav = parsePcmWavBuffer(buffer);
+  if (wav.sampleRate !== MASTER_SAMPLE_RATE || wav.channels !== 1 || wav.bitsPerSample !== 24) {
+    throw new Error("Generated WAV chunk does not match the PCM master format.");
+  }
+
+  const sampleCount = Math.floor(wav.data.length / 3);
+  if (sampleCount === 0) {
+    return { durationSeconds: 0, activeRmsDbfs: -Infinity, peakDbfs: -Infinity, activeRatio: 0 };
+  }
+
+  let peak = 0;
+  for (let index = 0; index < sampleCount; index += 1) {
+    peak = Math.max(peak, Math.abs(wav.data.readIntLE(index * 3, 3)) / INT24_MAX);
+  }
+
+  const activeThreshold = Math.max(peak * SILENCE_THRESHOLD_RATIO, Math.pow(10, -60 / 20));
+  let activeSamples = 0;
+  let squareSum = 0;
+  for (let index = 0; index < sampleCount; index += 1) {
+    const sample = wav.data.readIntLE(index * 3, 3) / INT24_MAX;
+    if (Math.abs(sample) < activeThreshold) continue;
+    squareSum += sample * sample;
+    activeSamples += 1;
+  }
+
+  const activeRms = activeSamples > 0 ? Math.sqrt(squareSum / activeSamples) : 0;
+  return {
+    durationSeconds: wav.data.length / wav.byteRate,
+    activeRmsDbfs: dbfs(activeRms),
+    peakDbfs: dbfs(peak),
+    activeRatio: activeSamples / sampleCount,
+  };
+}
+
+function median(values: number[]) {
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+export async function matchPcm24ChunkLoudness(filePaths: string[]) {
+  const buffers = await Promise.all(filePaths.map((filePath) => fs.readFile(filePath)));
+  const metrics = buffers.map(measurePcm24Chunk);
+  const validLevels = metrics.map((item) => item.activeRmsDbfs).filter(Number.isFinite);
+  if (validLevels.length < 2) return metrics.map(() => 0);
+
+  const targetDbfs = median(validLevels);
+  const adjustments: number[] = [];
+
+  for (const [index, buffer] of buffers.entries()) {
+    const metric = metrics[index];
+    if (!Number.isFinite(metric.activeRmsDbfs) || !Number.isFinite(metric.peakDbfs)) {
+      adjustments.push(0);
+      continue;
+    }
+
+    const requestedDb = Math.max(
+      -CHUNK_LEVEL_MAX_ADJUSTMENT_DB,
+      Math.min(CHUNK_LEVEL_MAX_ADJUSTMENT_DB, targetDbfs - metric.activeRmsDbfs),
+    );
+    const peakSafeDb = MASTER_PEAK_TARGET_DBFS - metric.peakDbfs;
+    const adjustmentDb = Math.min(requestedDb, peakSafeDb);
+    adjustments.push(adjustmentDb);
+    if (Math.abs(adjustmentDb) < 0.1) continue;
+
+    const wav = parsePcmWavBuffer(buffer);
+    const gain = Math.pow(10, adjustmentDb / 20);
+    for (let sample = 0; sample < wav.data.length / 3; sample += 1) {
+      const value = wav.data.readIntLE(sample * 3, 3) * gain;
+      wav.data.writeIntLE(
+        Math.max(INT24_MIN, Math.min(INT24_MAX, Math.round(value))),
+        sample * 3,
+        3,
+      );
+    }
+    await fs.writeFile(filePaths[index], buffer);
+  }
+
+  return adjustments;
+}
 
 // Trim leading/trailing near-silence from one 24-bit chunk so the only inter-chunk gap is the
 // controlled punctuation pause (VoxCPM pads each chunk with variable silence → choppy rhythm).

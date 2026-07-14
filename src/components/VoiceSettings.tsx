@@ -11,6 +11,7 @@ export type ProviderHealthStatus = "connected" | "timeout" | "rate_limited" | "u
 export interface ProviderHealth {
   ok: boolean;
   status: ProviderHealthStatus;
+  backend?: "local" | "huggingface-space";
   message: string;
   baseUrl?: string;
   latencyMs?: number;
@@ -179,11 +180,11 @@ export function VoiceSettings({
         setEndpointNote(data.error || "Could not start local VoxCPM.");
         return;
       }
-      setEndpoint("http://localhost:7860");
+      await saveEndpoint("http://localhost:7860");
       setEndpointNote(
         data.alreadyRunning
-          ? "Local VoxCPM is already up — click Save & check."
-          : "Starting locally. First run downloads the model (minutes). Click Save & check when it's ready."
+          ? "Local VoxCPM2 is connected."
+          : "Starting local VoxCPM2. The first model load can take several minutes."
       );
       await refreshLocalStatus();
     } finally {
@@ -295,23 +296,14 @@ export function VoiceSettings({
                 </div>
               </div>
               <p className="text-xs leading-relaxed text-studio-muted">
-                {providerHealth?.message || "Checks the selected VoxCPM endpoint before remote generation."}
+                {providerHealth?.message || "Checks the managed local VoxCPM2 engine before generation."}
                 {providerHealth?.latencyMs !== undefined && providerHealth.latencyMs > 0
                   ? ` ${providerHealth.latencyMs}ms.`
                   : ""}
               </p>
-              <input
-                value={endpoint}
-                onChange={(event) => setEndpoint(event.target.value)}
-                placeholder="https://...hf.space or http://localhost:7860"
-                className="rounded-xl border border-studio-border bg-white/60 px-3 py-2 text-xs text-studio-text outline-none"
-              />
-              <div className="flex flex-wrap items-center gap-2">
-                <button type="button" onClick={() => setEndpoint("https://openbmb-voxcpm-demo.hf.space")} className="studio-soft-chip-bg rounded-full border border-white/10 px-3 py-1 text-xs font-semibold text-studio-text">HF Space</button>
-                <button type="button" onClick={() => setEndpoint("http://localhost:7860")} className="studio-soft-chip-bg rounded-full border border-white/10 px-3 py-1 text-xs font-semibold text-studio-text">Local</button>
-                <button type="button" disabled={endpointSaving || !endpoint.trim()} onClick={() => void saveEndpoint(endpoint)} className="rounded-full bg-studio-accent px-3 py-1 text-xs font-semibold text-white disabled:opacity-45">
-                  {endpointSaving ? "Saving..." : "Save & check"}
-                </button>
+              <div className="studio-control-bg flex items-center justify-between gap-3 rounded-2xl border border-white/10 px-3 py-2 text-xs">
+                <span className="font-medium text-studio-text">Managed local engine</span>
+                <code className="text-studio-muted">{endpoint || "http://localhost:7860"}</code>
               </div>
               {localStatus.configured && (
                 <div className="flex flex-wrap items-center gap-2">
@@ -462,7 +454,7 @@ export function VoiceSettings({
                   onChange={(event) => onInferenceTimestepsChange(Number(event.target.value))}
                   className="accent-studio-accent"
                 />
-                <span className="text-xs font-normal text-studio-muted">Higher = better quality, slower. Local server only (ignored on HF Space).</span>
+                <span className="text-xs font-normal text-studio-muted">Higher = better quality, slower. Thalika locks one voice seed across every chunk automatically.</span>
               </label>
 
               <div className="grid gap-3 text-sm text-studio-muted">
