@@ -13,7 +13,7 @@ Core principles:
 - Keep the app local-first.
 - Keep generated audio as real PCM WAV.
 - Keep user data on local disk.
-- Use remote inference (HF Space) by default; a managed local VoxCPM2 server is supported as an optional faster path (see Local VoxCPM2 Server below).
+- Use the managed local VoxCPM2 server as the production inference path.
 - Do not add databases, auth, cloud storage, Docker, Runpod, payments, or video features.
 
 ## Current Product Surface
@@ -43,10 +43,11 @@ Use:
 - Zod for validation
 - local Markdown/JSON/files under `data/`
 
-For the optional local VoxCPM2 server (faster than the public HF Space):
+For the local VoxCPM2 server:
 
-- Python 3.10–3.12 with the `voxcpm` package, served by its own Gradio demo
+- Python 3.10–3.12 with pinned `voxcpm==2.0.3`, served by its own Gradio app
 - The Next.js app launches and manages this server as a separate process and talks to it over HTTP — it does NOT embed Python into the Next.js runtime. This is the supported path for local inference.
+- Keep generation serialized, seed Python/NumPy/PyTorch consistently, and keep the client/server Gradio argument contract in sync.
 
 Do not use:
 
@@ -92,7 +93,7 @@ Final output must stay:
 - mono
 - `24-bit PCM`
 
-Remote HF Space may return MP3. Decode it immediately in memory, write validated temporary WAV chunks, discard MP3 bytes, and merge WAV chunks only.
+The local server returns WAV. Validate and convert every chunk to `48kHz` mono `24-bit PCM WAV` before downstream processing.
 
 Never concatenate MP3 chunks. Never write mislabeled `.wav` files that contain MPEG audio.
 
@@ -160,7 +161,7 @@ Generation validation errors:
 - `src/app/api/generate/route.ts`
 - `src/lib/services/generation-service.ts`
 
-Remote HF/VoxCPM2 failures:
+Local VoxCPM2 failures:
 
 - `src/lib/providers/hf-utils.ts`
 - `src/lib/providers/voxcpm2-health.ts`
@@ -215,7 +216,7 @@ For UI changes, verify:
 
 ## Local VoxCPM2 Server
 
-For local inference that is faster and free of the public Space's rate limits:
+For production inference:
 
 - Requires Python 3.10–3.12 and ideally a GPU (MPS works on Apple Silicon, CUDA on NVIDIA).
 - The app launches and manages a local VoxCPM2 Gradio server as a separate process via `/api/voxcpm-local` (start / stop / status). It never embeds Python in the Next.js runtime.
@@ -226,7 +227,9 @@ For local inference that is faster and free of the public Space's rate limits:
   - `src/app/api/voxcpm-local/route.ts`
   - `src/lib/providers/voxcpm2-health.ts`
   - `src/components/VoiceSettings.tsx`
-- The local server must expose the same Gradio `/generate` endpoint the app already speaks. `HF_VOXCPM2_URL` swaps the app to the local URL (`http://localhost:7860` by default).
+- The local server must expose the 11-argument Gradio `/generate` contract used by the app. `HF_VOXCPM2_URL` stays on `http://localhost:7860`.
+- One stable reference-derived consistency seed must be reused for every chunk. Only pace/loudness outliers may use deterministic alternate takes.
+- Preserve conservative chunk active-RMS matching and final PCM WAV validation.
 
 ## Git And Data Safety
 

@@ -1,12 +1,12 @@
 # Thalika Local VoxCPM2 Server
 
-This is the optional local inference backend for Thalika. It runs VoxCPM2 on your
+This is the production inference backend for Thalika. It runs VoxCPM2 on your
 own machine as a **separate process** and exposes the same Gradio `/generate`
 endpoint the Next.js app already speaks — so once it's up, you just point the app
 at `http://localhost:7860` (or click **Start** in the app's Voice Settings).
 
-Local inference is faster and free of the public Hugging Face Space's rate limits,
-and lets you tune quality via `VOXCPM_TIMESTEPS`.
+Local inference keeps model execution on the device, avoids shared Space queues, and
+lets Thalika control sampling, serialization, chunk consistency, and quality tuning.
 
 ## Requirements
 
@@ -15,7 +15,7 @@ and lets you tune quality via `VOXCPM_TIMESTEPS`.
 - Ideally a GPU: **Apple Silicon (MPS)** works and is much faster than CPU; **CUDA**
   on NVIDIA is fastest. CPU works but is slow.
 - ~5 GB free disk for the model (downloaded once, then cached).
-- ~8 GB RAM.
+- 16 GB RAM recommended. CPU-only operation works but is substantially slower.
 
 ## Quick start
 
@@ -56,17 +56,14 @@ python server.py
 
 ## Connecting Thalika to the local server
 
-With the server running on `:7860`, either:
+With the server running on `:7860`, either click **Start local model** in
+**Voice Over → Voice Settings**, or set the endpoint in `.env.local`:
 
-1. In the app → **Voice Over → Voice Settings → VoxCPM endpoint**, click **Start**
-   (the app launches `scripts/voxcpm-local.sh` for you), then click **Local** and
-   **Save & check**. The health badge should turn green (`connected`).
-
-2. Or set it manually in `.env.local`:
    ```bash
    HF_VOXCPM2_URL=http://localhost:7860
    ```
-   and restart the app.
+
+Restart the app after changing `.env.local`.
 
 ## Configuration (environment variables)
 
@@ -85,9 +82,14 @@ VOXCPM_DEVICE=auto VOXCPM_TIMESTEPS=24 python server.py
 ## How it integrates with the app
 
 The app does **not** embed Python. It launches this server as a background process
-(via `/api/voxcpm-local`) and calls it over HTTP exactly like it calls the public
-HF Space. The `generate()` signature here mirrors the 8 arguments the app sends, in
-order, so no app code changes are required.
+via `/api/voxcpm-local` and calls it over localhost HTTP. The `generate()` signature
+mirrors the app's 11-argument contract, including inference steps, bad-case retry,
+and a consistency seed.
+
+The model server serializes requests with a single inference lock and resets Python,
+NumPy, and PyTorch random state before each chunk. Thalika derives one stable seed
+from the voice reference and settings, reuses it for every chunk, rejects pace or
+loudness outliers, and applies conservative PCM loudness matching before merge.
 
 Key files:
 - `local-server/server.py` — this server

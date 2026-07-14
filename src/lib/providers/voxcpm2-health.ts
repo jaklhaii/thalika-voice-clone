@@ -5,7 +5,7 @@ export type VoxCPM2HealthStatus = "connected" | "timeout" | "rate_limited" | "un
 
 export interface VoxCPM2Health {
   provider: "voxcpm2";
-  backend: "huggingface-space";
+  backend: "local" | "huggingface-space";
   ok: boolean;
   status: VoxCPM2HealthStatus;
   baseUrl: string;
@@ -16,12 +16,18 @@ export interface VoxCPM2Health {
   checkedAt: string;
 }
 
-// Local-first default: the managed local VoxCPM2 server (scripts/voxcpm-local.sh) exposes the
-// same /generate contract the app speaks and gives full control over inference_timesteps (the
-// biggest stability/quality lever, locked out on the public Space). Point HF_VOXCPM2_URL at the
-// public/demo Space explicitly if you want remote inference instead.
+// Production default: the managed local VoxCPM2 server gives Thalika deterministic chunk seeds,
+// serialized inference, and full control over inference timesteps and retry behavior.
 const localVoxCPM2Url = "http://localhost:7860";
-const publicSpaceFallback = "https://openbmb-voxcpm-demo.hf.space";
+
+function isLocalBaseUrl(baseUrl: string) {
+  try {
+    const hostname = new URL(baseUrl).hostname.replace(/^\[|\]$/g, "");
+    return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "0.0.0.0" || hostname === "::1";
+  } catch {
+    return false;
+  }
+}
 
 // Precedence: user setting (.env.local, set in-app) > env > local default.
 export async function getVoxCPM2BaseUrl() {
@@ -33,10 +39,8 @@ export async function getVoxCPM2BaseUrl() {
 // /generate args like inference_timesteps) that the public Space's fixed signature would reject.
 export async function isLocalVoxCPM2Endpoint() {
   const baseUrl = await getVoxCPM2BaseUrl();
-  return /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?(\/|$)/i.test(baseUrl);
+  return isLocalBaseUrl(baseUrl);
 }
-
-export const VOXCPM2_PUBLIC_SPACE_URL = publicSpaceFallback;
 
 function makeHealth(
   status: VoxCPM2HealthStatus,
@@ -49,7 +53,7 @@ function makeHealth(
 ): VoxCPM2Health {
   return {
     provider: "voxcpm2",
-    backend: "huggingface-space",
+    backend: isLocalBaseUrl(options.baseUrl) ? "local" : "huggingface-space",
     ok: status === "connected",
     status,
     baseUrl: options.baseUrl,
@@ -117,14 +121,14 @@ async function probeJson(baseUrl: string, endpoint: string) {
   }
 
   try {
-    const json = await readJsonResponse<unknown>(response, "Invalid response from VoxCPM2 Space.");
+    const json = await readJsonResponse<unknown>(response, `Invalid response from ${endpointName(baseUrl)}.`);
     return { json, latencyMs };
   } catch {
     return makeHealth("invalid_response", {
       baseUrl,
       endpoint,
       latencyMs,
-      message: "Invalid response from VoxCPM2 Space."
+      message: `Invalid response from ${endpointName(baseUrl)}.`
     });
   }
 }
@@ -163,7 +167,7 @@ export async function checkVoxCPM2Health(): Promise<VoxCPM2Health> {
       baseUrl,
       endpoint: "/gradio_api/info",
       latencyMs: info.latencyMs,
-      message: "Invalid response from VoxCPM2 Space."
+      message: `Invalid response from ${endpointName(baseUrl)}.`
     });
   } catch (error) {
     if (error instanceof TimeoutError) {
@@ -171,7 +175,7 @@ export async function checkVoxCPM2Health(): Promise<VoxCPM2Health> {
         baseUrl,
         endpoint: "/gradio_api/info",
         latencyMs: getHFRequestTimeout(),
-        message: "Remote inference timed out."
+        message: `${endpointName(baseUrl)} timed out.`
       });
     }
 

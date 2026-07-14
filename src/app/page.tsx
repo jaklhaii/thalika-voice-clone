@@ -393,6 +393,7 @@ export default function Home() {
 
   const isGenerating = status === "saving" || status === "generating";
   const isDesign = voiceMode === "design";
+  const localEngineReady = providerHealth?.ok === true && providerHealth.backend === "local";
   const referenceRequirementError = isDesign
     ? voiceDescription.trim()
       ? ""
@@ -408,6 +409,7 @@ export default function Home() {
   const generateDisabled =
     Boolean(scriptError) ||
     isGenerating ||
+    !localEngineReady ||
     Boolean(referenceRequirementError) ||
     (isBurmeseScript && (referenceQualityReport?.status === "block" || !normalizationApproved));
   const activePreflight: ProviderPreflightResult = preflightProvider({
@@ -423,6 +425,7 @@ export default function Home() {
   const capabilityDisabled = !activePreflight.ok;
   const disabledReason =
     scriptError ||
+    (!localEngineReady ? "Start the local VoxCPM2 engine before generating audio." : "") ||
     referenceRequirementError ||
     (referenceQualityReport?.status === "block" ? "Reference audio quality is blocked. Upload a cleaner voice sample." : "") ||
     (!activePreflight.ok ? activePreflight.message : "");

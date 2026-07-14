@@ -13,12 +13,12 @@ interface StudioPageShellProps {
 
 export function StudioPageShell({ activeTab, badge, title, description, aside, children }: StudioPageShellProps) {
   return (
-    <main className="mx-auto min-h-screen w-full max-w-[1400px] px-3 py-4 sm:px-5 lg:px-8">
+    <main className="mx-auto min-h-screen w-full min-w-0 max-w-[1400px] px-3 py-4 sm:px-5 lg:px-8">
       <header className="grid gap-6">
         <AppHeader activeTab={activeTab} />
 
-        <div className="grid gap-5 px-1 pb-1 pt-1 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.62fr)] lg:items-end">
-          <div>
+        <div className="grid min-w-0 gap-5 px-1 pb-1 pt-1 lg:grid-cols-[minmax(0,1fr)_minmax(360px,0.62fr)] lg:items-end">
+          <div className="min-w-0">
             {/* <p className="mb-3 inline-flex items-center gap-2 rounded-full border border-studio-accent/25 bg-studio-accent/10 px-3 py-1 text-xs font-semibold text-emerald-800">
               <Sparkles size={14} /> {badge}
             </p> */}

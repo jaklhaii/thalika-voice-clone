@@ -51,6 +51,11 @@ type GenerationContext = {
 // jobId. Progress is written to the job record (polled by the client); it never throws — any
 // failure is recorded on the job so a long script can't surface as a dropped HTTP request.
 async function runGeneration({ baseJob, effectiveInput, scriptId, title }: GenerationContext) {
+  // Track the latest chunk progress so a failure can localize WHICH chunk broke (Phase 3 error
+  // localization). Without this, the failed job would lose completedChunks/totalChunks and the
+  // client couldn't show the failing segment in the visual cells.
+  let lastProgress: { completedChunks: number; totalChunks: number; progressMessage?: string } | undefined;
+
   try {
     const provider = getProvider(effectiveInput.provider);
     const audio = await provider.generate({
@@ -59,6 +64,7 @@ async function runGeneration({ baseJob, effectiveInput, scriptId, title }: Gener
       scriptId,
       title,
       onProgress: async (progress) => {
+        lastProgress = { completedChunks: progress.completedChunks, totalChunks: progress.totalChunks, progressMessage: progress.message };
         await saveJob({
           ...baseJob,
           status: "generating",
@@ -73,6 +79,9 @@ async function runGeneration({ baseJob, effectiveInput, scriptId, title }: Gener
       ...baseJob,
       format: audio.format,
       status: "completed",
+      completedChunks: lastProgress?.totalChunks,
+      totalChunks: lastProgress?.totalChunks,
+      progressMessage: "Audio generation completed.",
       audioFile: audio.filename,
       rawAudioFile: audio.rawAudioFile,
       content: formatJobContent(provider.name, audio)
@@ -81,6 +90,9 @@ async function runGeneration({ baseJob, effectiveInput, scriptId, title }: Gener
     await saveJob({
       ...baseJob,
       status: "failed",
+      completedChunks: lastProgress?.completedChunks,
+      totalChunks: lastProgress?.totalChunks,
+      progressMessage: lastProgress?.progressMessage,
       error: providerErrorMessage(error),
       content: "Generation failed before audio output was created."
     }).catch(() => undefined);
@@ -145,7 +157,9 @@ export async function startVoiceGeneration(input: GenerateVoiceRequest): Promise
     lexiconRevision: effectiveInput.lexiconRevision,
     normalizationChanges,
     referenceQualityScore: effectiveInput.referenceQualityReport?.score,
-    referenceTranscriptUsed: Boolean(effectiveInput.referenceText?.trim()),
+    // Reference text is stored as profile notes only. The provider intentionally uses isolated
+    // reference-audio cloning, so job metadata must not claim a transcript was sent.
+    referenceTranscriptUsed: false,
     createdAt
   };
 

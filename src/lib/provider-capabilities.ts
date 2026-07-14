@@ -5,10 +5,10 @@ export const providerCapabilities: Record<VoiceProvider, ProviderCapability> = {
   voxcpm2: {
     provider: "voxcpm2",
     name: "VoxCPM2 Multilingual",
-    inference: "remote_hf",
+    inference: "local",
     cloneQuality: "production",
-    privacy: "remote_public",
-    statusLabel: "remote public",
+    privacy: "local",
+    statusLabel: "local engine",
     supportedLanguages: [
       "my",
       "zh",
@@ -41,7 +41,7 @@ export const providerCapabilities: Record<VoiceProvider, ProviderCapability> = {
     canCloneVoice: true,
     limitations: [
       "Direct VoxCPM2 engine access for supported multilingual scripts.",
-      "Uses the public OpenBMB Hugging Face Space for remote inference.",
+      "Runs the OpenBMB VoxCPM2 model through Thalika's managed local server.",
       "Highest-fidelity cloning needs clean reference audio and stable Burmese text."
     ],
     recommendation: "This is the strongest current candidate for Burmese cloning. Send Burmese text and clean reference audio."
@@ -112,8 +112,8 @@ export function preflightProvider(
     detectedLanguage,
     message:
       detectedLanguage.code === "my"
-        ? "Ready: Burmese pronunciation QA applied, cloning with VoxCPM2 remote inference."
-        : "Ready to clone with VoxCPM2 remote inference.",
+        ? "Ready: Burmese pronunciation QA applied, cloning with the local VoxCPM2 engine."
+        : "Ready to clone with the local VoxCPM2 engine.",
     nextStep: "",
     hideNextStep: true
   };

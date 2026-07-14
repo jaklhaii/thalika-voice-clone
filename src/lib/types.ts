@@ -16,9 +16,9 @@ export interface LanguageDetectionResult {
 export interface ProviderCapability {
   provider: VoiceProvider;
   name: string;
-  inference: "remote_hf" | "placeholder";
+  inference: "local" | "remote_hf" | "placeholder";
   cloneQuality: CapabilityLevel;
-  privacy: "remote_public";
+  privacy: "local" | "remote_public";
   statusLabel?: string;
   supportedLanguages: LanguageCode[];
   supportedLanguageLabels: string[];

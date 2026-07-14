@@ -46,9 +46,16 @@ if [ ! -d "$VENV_DIR" ]; then
 fi
 # shellcheck disable=SC1091
 source "$VENV_DIR/bin/activate"
-python -m pip install -U pip >/dev/null
-echo "[thalika-local] installing requirements (first run downloads torch + voxcpm; be patient)..."
-python -m pip install -r requirements.txt
+REQ_HASH="$(python -c 'import hashlib;print(hashlib.sha256(open("requirements.txt","rb").read()).hexdigest())')"
+REQ_STAMP="$VENV_DIR/.thalika-requirements"
+if [ ! -f "$REQ_STAMP" ] || [ "$(cat "$REQ_STAMP")" != "$REQ_HASH" ]; then
+  python -m pip install -U pip >/dev/null
+  echo "[thalika-local] installing requirements (first run downloads torch + voxcpm; be patient)..."
+  python -m pip install -r requirements.txt
+  printf '%s' "$REQ_HASH" > "$REQ_STAMP"
+else
+  echo "[thalika-local] requirements unchanged; skipping install."
+fi
 
 # --- Download the model BEFORE starting the server, so a stall fails loudly + resumes (instead of
 # the server hanging at "loading model 0%" forever). HF Hub stalls a lot from some regions; set
@@ -60,9 +67,9 @@ if [ "${VOXCPM_USE_MODELSCOPE:-0}" = "1" ]; then
   python -c "from modelscope import snapshot_download; snapshot_download('OpenBMB/VoxCPM2', local_dir='$MODEL_DIR')"
   export VOXCPM_MODEL_DIR="$MODEL_DIR"
 else
-  # hf_transfer = faster, parallel, resumable; timeout turns a network stall into a retryable error
-  # instead of a silent forever-hang.
-  export HF_HUB_ENABLE_HF_TRANSFER=1
+  # Xet-backed parallel downloads are resumable; the timeout turns a network stall into a
+  # retryable error instead of a silent forever-hang.
+  export HF_XET_HIGH_PERFORMANCE=1
   export HF_HUB_DOWNLOAD_TIMEOUT="${HF_HUB_DOWNLOAD_TIMEOUT:-30}"
   echo "[thalika-local] downloading weights from Hugging Face (resumable; ~8GB first time)..."
   python -c "from huggingface_hub import snapshot_download; snapshot_download('openbmb/VoxCPM2')"

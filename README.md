@@ -9,7 +9,9 @@ Script များ၊ generation job များ၊ generated audio မျာ�
 - Gemini API ဖြင့် script rewrite လုပ်နိုင်သော Script page
 - Script input နှင့် reference audio upload ပါသော Voice Over page
 - VoxCPM2 engine ကို အသုံးပြုသော single provider (Burmese script အတွက် pronunciation QA အလိုလို အသုံးပြုသည်)
-- Default အားဖြင့် VoxCPM2 Hugging Face Space remote inference နှင့် optional managed local VoxCPM2 server
+- Managed local VoxCPM2 inference (Apple Silicon MPS, NVIDIA CUDA သို့မဟုတ် CPU)
+- Voice reference နှင့် settings မှ stable seed ထုတ်ပြီး chunk အားလုံးတွင် တစ်ခုတည်းအသုံးပြုသော consistency control
+- Pace/loudness outlier detection၊ selective regeneration နှင့် conservative chunk loudness matching
 - Validated `48kHz` mono `24-bit PCM WAV` master output
 - Long script များအတွက် punctuation-aware chunk ခွဲခြင်းနှင့် PCM WAV merge လုပ်ခြင်း
 - Audio preview နှင့် download
@@ -26,17 +28,18 @@ Script များ၊ generation job များ၊ generated audio မျာ�
 - Desktop shell: Electron
 - Validation: Zod
 - Storage: local Markdown, JSON, audio files
-- Remote voice provider: VoxCPM2 Hugging Face Space
-- Local voice server (optional): `local-server/` (Python + VoxCPM2)
+- Local voice model: VoxCPM2 `2.0.3` ကို `local-server/` (Python + Gradio) မှတစ်ဆင့် run သည်
 - Script rewrite provider: Google Gemini API
 
 ## ကြိုတင် လိုအပ်ချက်များ
 
 - Node.js `22.12.0` သို့မဟုတ် ပိုသစ်သော version
 - npm
-- VoxCPM2 သို့မဟုတ် Gemini ကို အသုံးပြုမည်ဆိုပါက Internet connection
+- Python `3.10`–`3.12`
+- VoxCPM2 model ပထမဆုံး download နှင့် Gemini rewrite အတွက်သာ Internet connection
+- Local VoxCPM2 အတွက် 16 GB RAM နှင့် Apple Silicon MPS သို့မဟုတ် NVIDIA CUDA recommended; CPU-only run နိုင်သော်လည်း နှေးသည်
 
-VoxCPM2 inference ကို default အားဖြင့် local server (`http://localhost:7860`) မှတစ်ဆင့် run သည်။ Local server က inference_timesteps နှင့် retry_badcase အပြည့်အဝ ထိန်းချုပ်နိုင်ပြီး public Space ထက် ပိုမြန်/ပိုတည်ငြိမ်သည်။ Remote (Hugging Face Space) ကို အသုံးပြုလိုပါက `HF_VOXCPM2_URL` ကို public Space သို့ ထားပါ။ Local server အသွင်းအကျေးအတွက် အောက်ပါ "Local VoxCPM2 Server" အပိုင်းကို ကြည့်ပါ။
+VoxCPM2 inference ကို managed local server (`http://localhost:7860`) မှတစ်ဆင့်သာ production flow အဖြစ် run သည်။ Model cache ပြည့်ပြီးနောက် voice generation အတွက် Internet မလိုပါ။
 
 ## Install လုပ်ခြင်း
 
@@ -56,16 +59,20 @@ cp .env.example .env.local
 အသုံးပြုနိုင်သော တန်ဖိုးများ:
 
 ```bash
-HF_VOXCPM2_URL=https://openbmb-voxcpm-demo.hf.space
+HF_VOXCPM2_URL=http://localhost:7860
 HF_REQUEST_TIMEOUT=60000
 HF_INFERENCE_TIMEOUT=300000
+VOXCPM_DEVICE=auto
+VOXCPM_TIMESTEPS=10
 GEMINI_REQUEST_TIMEOUT=60000
 GEMINI_API_KEY=your_google_gemini_api_key_here
 ```
 
-- `HF_VOXCPM2_URL`: VoxCPM2 Hugging Face Space ၏ base URL
-- `HF_REQUEST_TIMEOUT`: Hugging Face request timeout milliseconds
+- `HF_VOXCPM2_URL`: Managed local VoxCPM2 server URL; default `http://localhost:7860`
+- `HF_REQUEST_TIMEOUT`: Local model health/upload request timeout milliseconds
 - `HF_INFERENCE_TIMEOUT`: VoxCPM2 audio segment တစ်ခု generate လုပ်ရန် စောင့်မည့် အများဆုံး milliseconds
+- `VOXCPM_DEVICE`: `auto`, `mps`, `cuda`, သို့မဟုတ် `cpu`
+- `VOXCPM_TIMESTEPS`: Diffusion sampling steps; quality/speed tradeoff
 - `GEMINI_REQUEST_TIMEOUT`: Gemini request timeout milliseconds
 - `GEMINI_API_KEY`: Script page မှ rewrite လုပ်ရာတွင် အသုံးပြုသော Gemini API key
 
@@ -178,7 +185,7 @@ Voice Over controls များ:
 - Speed: `0.8x` မှ `1.2x`
 - Emotion: `neutral`, `calm`, `energetic`, `dramatic`
 
-VoxCPM2 Space (public သို့ local) တွင် dedicated numeric speed parameter မရှိပါ။ Speed slider ကို pace guidance အဖြစ် control instruction ထဲတွင် အသုံးပြုသည်။
+VoxCPM2 model interface တွင် dedicated numeric speed parameter မရှိပါ။ Speed slider ကို pace guidance အဖြစ် control instruction ထဲတွင် အသုံးပြုသည်။
 
 Recommended reference audio သည် `6-30` seconds၊ quiet room၊ one speaker၊ music မပါသော dry voice ဖြစ်သည်။ Local voice profile ကို user က consent checkbox ဖြင့် အတည်ပြုပြီး `Save Local Profile` နှိပ်မှသာ device disk ပေါ်တွင် သိမ်းသည်။
 
@@ -216,15 +223,15 @@ Browser mode တွင် folder path ကို copy လုပ်နိုင်
 
 `PCM WAV Migration` section ကို အသုံးပြုပြီး ယခင် version များမှ `.mp3` outputs နှင့် MP3 bytes ပါနေသော mislabeled `.wav` files များကို real PCM WAV masters အဖြစ် ပြောင်းနိုင်သည်။ Migration မစမီ user confirmation တောင်းသည်။ မူရင်း compressed files များကို `data/outputs/legacy-backup/` အောက်တွင် သိမ်းထားပြီး သက်ဆိုင်ရာ job Markdown metadata ကို migrated `.wav` filename ဖြင့် update လုပ်သည်။
 
-### Local VoxCPM2 Server (optional)
+### Local VoxCPM2 Server
 
-Default အားဖြင့် VoxCPM2 inference ကို local server (`http://localhost:7860`) မှတစ်ဆင့် run သည်။ Local server က inference_timesteps/retry_badcase အပြည့်အဝ ထိန်းချုပ်နိုင်ပြီး public Space ထက် ပိုမြန်/ပိုတည်ငြိမ်သည်။ အသေးစိတ်အတွက် `local-server/README.md` ကို ကြည့်ပါ။
+Default inference engine သည် local server (`http://localhost:7860`) ဖြစ်သည်။ Thalika က model queue, seed, inference steps, retry, chunk selection နှင့် WAV merge ကို နောက်ကွယ်မှ စနစ်တကျ ထိန်းသည်။ အသေးစိတ်အတွက် `local-server/README.md` ကို ကြည့်ပါ။
 
 **လိုအပ်ချက်များ**
 
 - Python `3.10`, `3.11`, သို့မဟုတ် `3.12` (3.13+ ကို `voxcpm`/PyTorch stack က လက်မခံပါ)။ `python3 --version` ဖြင့် စစ်ပါ။
 - GPU ရှိလျှင် ပိုကောင်းသည် (Apple Silicon MPS, NVIDIA CUDA)။ CPU နှင့်လည်း run နိုင်သော်လည်း နှေးသည်။
-- Model (~5 GB) ကို ပထမဆုံး run တွင် download လုပ်သည်။ ~8 GB RAM။
+- Model (~5 GB) ကို ပထမဆုံး run တွင် download လုပ်သည်။ 16 GB RAM recommended။
 
 **Install နှင့် run လုပ်ခြင်း**
 
@@ -236,13 +243,11 @@ bash scripts/voxcpm-local.sh
 
 ၎င်းသည် `.voxcpm-venv` တည်ဆောက်ပြီး `requirements.txt` install လုပ်ကာ `local-server/server.py` ကို run သည်။ Server တက်လာသည်နှင့် `http://localhost:7860` တွင် ရောက်သည်။ Python version မှားနေပါက `brew install python@3.11` (သို့) `uv` ကို အသုံးပြုပါ — အသေးစိတ်အတွက် `local-server/README.md`။
 
-> Note: ဤစက်တွင် Python 3.14 သာ ရှိသောကြောင့် local server ကို ဤတွင် တိုက်ရိုက် run စစ်ဆေး၍ မရပါ။ အထက်ပါ တောင်းဆိုထားသော Python 3.10–3.12 ပါသော စက်တွင် run ပါ။
-
 **App ကို local server သို့ ချိတ်ခြင်း**
 
-1. App → Voice Over → Voice Settings → VoxCPM endpoint တွင် `Start` ကို နှိပ်ပါ (app က `scripts/voxcpm-local.sh` ကို background တွင် run ပေးသည်)။
-2. `Local` ကို နှိပ်ပြီး `Save & check` ကို နှိပ်ပါ။ health badge စိမ်းသွားပါက အဆင်ပြေပါသည်။
-3. (သို့) `.env.local` တွင် `HF_VOXCPM2_URL=http://localhost:7860` ထားပြီး app ပြန်စပါ။
+1. App → Voice Over → Voice Settings တွင် `Start local model` ကို နှိပ်ပါ။
+2. Health badge `Local connected` ဖြစ်သည်အထိ စောင့်ပါ။
+3. Command line မှ run လိုပါက `bash scripts/voxcpm-local.sh` ကို အသုံးပြုပါ။
 
 **Quality tuning (local server တွင်သာ)**
 
@@ -274,9 +279,9 @@ Audio generation request များအတွက် အောက်ပါ rules
 
 Script အရှည်ကို အများဆုံး `50,000` characters အထိ လက်ခံသည်။
 
-VoxCPM2 request များအတွက် script ကို အများဆုံး `420` characters ပါသော chunks များအဖြစ် ခွဲသည်။ Public VoxCPM2 Space က compressed MP3 chunk ပြန်ပေးလာသည်နှင့် Thalika သည် disk ပေါ်သို့ MP3 file မရေးမီ memory ထဲတွင် ချက်ချင်း decode လုပ်သည်။ ထို့နောက် real `48kHz` mono `24-bit PCM WAV` temporary chunk အဖြစ် validate လုပ်ပြီးမှ သိမ်းသည်။ Pipeline ၏ နောက်ဆက်တွဲအဆင့်များတွင် MP3 ကို မသုံးတော့ပါ။
+VoxCPM2 request များအတွက် script ကို default `180` characters ဝန်းကျင် punctuation-aware chunks အဖြစ် ခွဲသည်။ Local model သည် chunk တစ်ခုစီကို WAV ဖြင့်ပြန်ပေးပြီး Thalika က real `48kHz` mono `24-bit PCM WAV` အဖြစ် validate လုပ်သည်။ Voice reference၊ clone settings နှင့် emotion တူပါက stable consistency seed တစ်ခုတည်းကို chunk အားလုံးတွင် အသုံးပြုသည်။
 
-Validated WAV chunks များကို `data/outputs/` အောက်ရှိ final `RIFF/WAVE` master file တစ်ခုအဖြစ် merge လုပ်ပြီး temporary folder ကို ဖျက်သည်။ Chunk boundary pause ကို punctuation အလိုက် ထည့်သည်။
+Chunk တစ်ခုစီ၏ pace နှင့် active loudness ကို accepted chunks များ၏ median နှင့်နှိုင်းသည်။ Outlier ဖြစ်မှသာ alternate deterministic take များစမ်းပြီး အနီးဆုံး take ကိုရွေးသည်။ Merge မတိုင်ခင် active RMS ကို median ဆီ အများဆုံး `±3 dB` ဖြင့် peak-safe ချိန်ညှိကာ final `RIFF/WAVE` master တစ်ခုအဖြစ် merge လုပ်သည်။
 
 | Chunk ending | Pause |
 | --- | --- |
@@ -284,9 +289,7 @@ Validated WAV chunks များကို `data/outputs/` အောက်ရှ
 | `၊`, `,`, `;`, `:` | `160ms` |
 | Explicit punctuation မရှိ | `120ms` |
 
-Public Space သည် download မပြန်မီ upstream MP3 compression လုပ်ထားဆဲဖြစ်သည်။ Thalika ၏ immediate decode pipeline သည် download ပြီးနောက် ထပ်မံ compressed merge မလုပ်စေဘဲ downstream degradation ကို တားသည်။ Source-level WAV ကို ရရှိရန် WAV output ပေးနိုင်သော private သို့မဟုတ် self-hosted VoxCPM2 backend လိုအပ်သည်။
-
-Long script generate လုပ်နေစဉ် chunk progress ကို သက်ဆိုင်ရာ `data/jobs/` Markdown file တွင် သိမ်းသည်။ Hugging Face request တစ်ခု အလွန်ကြာသွားပါက `HF_INFERENCE_TIMEOUT` ရောက်သောအခါ clean timeout ဖြစ်ပြီး retry လုပ်သည်။ Local diagnostics ကို `data/logs/generation.log` တွင် သိမ်းသည်။ ဤ log တွင် script စာသားနှင့် reference audio bytes မပါပါ။
+Long script generate လုပ်နေစဉ် chunk progress ကို သက်ဆိုင်ရာ `data/jobs/` Markdown file တွင် သိမ်းသည်။ Local inference အလွန်ကြာသွားပါက `HF_INFERENCE_TIMEOUT` ရောက်သောအခါ clean timeout ဖြစ်ပြီး retry လုပ်သည်။ Local diagnostics ကို `data/logs/generation.log` တွင် သိမ်းသည်။ ဤ log တွင် script စာသားနှင့် reference audio bytes မပါပါ။
 
 ## Local Storage
 
@@ -321,7 +324,7 @@ Script page နှင့် Voice Over page တို့သည် `data/memory/v
 | `PUT` | `/api/history/{jobId}/review` | Human listening QA score သိမ်းခြင်း |
 | `GET` | `/api/scripts` | Saved scripts များကို ဖော်ပြခြင်း |
 | `GET` | `/api/providers/capabilities` | Provider capability metadata ဖော်ပြခြင်း |
-| `GET` | `/api/providers/voxcpm2/health` | VoxCPM2 Hugging Face Space ကို probe လုပ်ခြင်း |
+| `GET` | `/api/providers/voxcpm2/health` | Managed local VoxCPM2 server ကို probe လုပ်ခြင်း |
 | `POST` | `/api/rewrite` | Gemini ဖြင့် script rewrite လုပ်ခြင်း |
 | `GET`, `POST` | `/api/settings/gemini` | Gemini API key state ဖတ်ခြင်း သို့မဟုတ် သိမ်းဆည်းခြင်း |
 | `GET`, `POST`, `DELETE` | `/api/drafts/voice-over` | Shared Voice Over draft ဖတ်ခြင်း၊ သိမ်းဆည်းခြင်း သို့မဟုတ် ဖျက်ခြင်း |
@@ -347,13 +350,12 @@ Voice Over page သည် `/api/providers/voxcpm2/health` ကို ခေါ်
 
 Badge တွင် အောက်ပါ status များ ပေါ်နိုင်သည်။
 
-- `HF connected`
-- `HF timeout`
-- `HF rate limited`
-- `HF unavailable`
-- `HF invalid response`
+- `Local connected`
+- `Local timeout`
+- `Local unavailable`
+- `Local invalid response`
 
-Health result သည် လက်ရှိ probe response ကို ဖော်ပြသည်။ Audio generation သည် သီးခြား remote request ဖြစ်သည်။
+Health result သည် local model server ၏ လက်ရှိ state ကို ဖော်ပြသည်။ `Local connected` မဖြစ်မချင်း Generate button ကို disable လုပ်ထားသည်။
 
 ## Resource Commands
 
@@ -369,7 +371,7 @@ CPU နှင့် RAM ကို sample ငါးကြိမ်ဖြင့်
 npm run metrics:resources
 ```
 
-ဤ commands များသည် detected Thalika, Next.js နှင့် Electron runtime processes များကို report ပြသည်။ Remote Hugging Face resource usage ကို မပြပါ။
+ဤ commands များသည် detected Thalika, Next.js, Electron နှင့် local VoxCPM2 runtime processes များကို report ပြသည်။
 
 ## Verification Commands
 
@@ -396,7 +398,7 @@ npm run build
 
 VoxCPM2 generation အလုပ်မလုပ်ပါက အောက်ပါ အချက်များကို စစ်ပါ။
 
-- Internet connection
+- Local model server running state
 - VoxCPM2 health badge
 - `HF_VOXCPM2_URL`
 - `HF_REQUEST_TIMEOUT`

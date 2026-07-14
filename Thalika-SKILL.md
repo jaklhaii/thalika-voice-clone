@@ -1,13 +1,13 @@
 ---
 name: thalika-voice-clone
-description: Use this skill when working on the Thalika Voice Clone Studio project, a local-first Next.js Burmese voice-over and voice-clone studio using VoxCPM2 remote inference, Gemini script rewrite, local Markdown storage, WAV-only output, voice profiles, Burmese normalization, and listening QA.
+description: Use this skill when working on Thalika, a local-first Next.js Burmese voice-over studio using managed local VoxCPM2 inference, deterministic chunk controls, Gemini rewrite, local files, WAV-only output, voice profiles, Burmese normalization, and listening QA.
 ---
 
 # Thalika Voice Clone Studio
 
 Use this skill when a coding agent needs to understand, modify, review, or extend the Thalika project without re-learning the whole product from scratch.
 
-Thalika is a local-first voice-over studio for Burmese production voice cloning. It is not a cloud SaaS app, not a database app, and not a local model-hosting stack. The app keeps scripts, jobs, profiles, reviews, logs, and generated audio on the user's machine. By default it calls remote inference (VoxCPM2 Hugging Face Space) for generation and rewrite; a managed local VoxCPM2 server is supported as an optional faster path that the app launches as a separate process and talks to over HTTP.
+Thalika is a local-first voice-over studio for Burmese production voice cloning. It is not a cloud SaaS app or database app. The app keeps scripts, jobs, profiles, reviews, logs, and generated audio on the user's machine. VoxCPM2 runs in a managed local Python process that Next.js launches and controls over localhost HTTP. Gemini is used only for optional script rewrite.
 
 ## Product Intent
 
@@ -16,7 +16,7 @@ Thalika helps the user:
 - Rewrite an existing script into more natural spoken narration.
 - Send the rewritten script into the voice-over workflow.
 - Upload or select a reference voice profile.
-- Generate Burmese production voice-over audio through VoxCPM2 remote inference.
+- Generate Burmese production voice-over audio through the managed local VoxCPM2 model.
 - Save all scripts, jobs, reviews, profiles, and outputs locally.
 - Preview, download, delete, and review generated audio.
 - Keep final audio as real PCM WAV for editing and archiving.
@@ -33,10 +33,10 @@ Do not add script generation as a separate creative writing product. The user al
 - Icons: lucide-react.
 - Audio decode: `@audio/decode-mp3` for immediate MP3-to-PCM conversion.
 - Storage: local files under `data/`; no database.
-- Voice inference: VoxCPM2 Hugging Face Space via native `fetch()` by default; an optional managed local VoxCPM2 server (Python, separate process) can be started in-app for faster local inference.
+- Voice inference: pinned VoxCPM2 `2.0.3` in a managed local Python/Gradio process, called from Next.js via localhost `fetch()`.
 - Script rewrite: Google Gemini API via configured API key.
 
-Never add Docker, Runpod, Supabase, PostgreSQL, MongoDB, Firebase, authentication, or payments. The optional local VoxCPM2 server (Python + the `voxcpm` package, launched as a separate process) is the supported local-inference path; do not embed Python into the Next.js runtime.
+Never add Docker, Runpod, Supabase, PostgreSQL, MongoDB, Firebase, authentication, or payments. Keep VoxCPM2 in its separate managed process; do not embed Python into the Next.js runtime.
 
 ## UX Structure
 
@@ -59,7 +59,7 @@ Current provider concepts:
 
 Mock, GPT-SoVITS, and CosyVoice were removed from the user-facing workflow. Do not reintroduce them unless requested.
 
-The core remote model is VoxCPM2 from OpenBMB, usually through the public Hugging Face Space configured by `HF_VOXCPM2_URL`.
+The core model is VoxCPM2 from OpenBMB. Production generation uses the local endpoint configured by `HF_VOXCPM2_URL=http://localhost:7860`.
 
 ## Voice Clone Quality Rules
 
@@ -86,7 +86,7 @@ Final audio must be WAV only:
 - `24-bit PCM WAV`
 - real `RIFF/WAVE`
 
-The public HF Space may return compressed MP3 bytes. Thalika must immediately decode remote audio in memory, write temporary chunks as validated PCM WAV, discard MP3 bytes, and merge WAV chunks into one final master.
+The local server returns WAV. Thalika validates and converts each chunk to real PCM WAV, trims edges, matches chunk loudness conservatively, and merges chunks into one final master.
 
 Do not concatenate MP3 files. Do not save newly generated MP3 chunks to `data/outputs/`. Do not produce mislabeled `.wav` files containing MPEG audio.
 
@@ -132,7 +132,7 @@ Do not expose arbitrary filesystem access from API routes. Only read and write k
 - `DELETE /api/voice-profiles/[profileId]`: delete saved profile and reference file.
 - `PUT /api/history/[jobId]/review`: save listening QA.
 - `GET | POST /api/storage/migrate-wav`: inspect and migrate legacy audio to real PCM WAV.
-- `GET /api/providers/voxcpm2/health`: check remote VoxCPM2 availability.
+- `GET /api/providers/voxcpm2/health`: check managed local VoxCPM2 availability.
 
 Any route that touches the filesystem must use `export const runtime = "nodejs";`.
 
@@ -143,6 +143,8 @@ Important environment values:
 - `HF_VOXCPM2_URL`
 - `HF_REQUEST_TIMEOUT`
 - `HF_INFERENCE_TIMEOUT`
+- `VOXCPM_DEVICE`
+- `VOXCPM_TIMESTEPS`
 - `GEMINI_REQUEST_TIMEOUT`
 - `GEMINI_API_KEY`
 
@@ -187,6 +189,7 @@ Before changing behavior:
 6. Preserve privacy boundaries: never store raw audio in job Markdown or expose audio bytes in profile lists.
 7. Keep generated scripts/jobs/reviews as Markdown unless the existing store uses JSON.
 8. Keep UI changes consistent with shared components and the current light theme.
+9. Preserve one reference-derived consistency seed across all chunks, serialized model inference, adaptive outlier selection, and conservative loudness matching.
 
 When fixing generation failures, check these areas first:
 

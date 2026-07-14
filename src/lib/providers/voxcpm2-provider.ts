@@ -1,12 +1,14 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import {
   convertRemoteAudioToPcm24Wav,
   getPunctuationAwarePauseMilliseconds,
+  matchPcm24ChunkLoudness,
+  measurePcm24Chunk,
   mergeWavFiles,
   normalizeMasterPeak,
-  pcm24DurationSeconds,
   trimSilenceEdges,
   type PcmWavConversionResult
 } from "../audio-utils";
@@ -53,12 +55,17 @@ function speedControl(speed: number) {
 // local server (and any self-hosted Space) but NOT by the public demo — so they must only be sent
 // when the endpoint actually accepts them, or the public Space's fixed 8-arg signature 500s.
 //
-// Local server contract (local-server/server.py): arg 9 = inference_timesteps, arg 10 = retry_badcase.
+// Local server contract (local-server/server.py): args 9-11 are inference_timesteps,
+// retry_badcase, and the deterministic consistency seed.
 // The user's "Quality steps" slider drives inference_timesteps; retry_badcase is on for stability.
 // For a NON-local self-hosted Space, VOXCPM2_EXTRA_PARAMS is the expert escape hatch instead.
-async function resolveExtraGenerateParams(isLocal: boolean, inferenceTimesteps: number | undefined) {
+function resolveExtraGenerateParams(
+  isLocal: boolean,
+  inferenceTimesteps: number | undefined,
+  consistencySeed: number,
+) {
   if (isLocal) {
-    return [Math.min(50, Math.max(4, inferenceTimesteps ?? 24)), true];
+    return [Math.min(50, Math.max(4, inferenceTimesteps ?? 24)), true, consistencySeed];
   }
   const raw = process.env.VOXCPM2_EXTRA_PARAMS?.trim();
   if (!raw) return [];
@@ -68,6 +75,17 @@ async function resolveExtraGenerateParams(isLocal: boolean, inferenceTimesteps: 
   } catch {
     return [];
   }
+}
+
+function stableVoiceSeed(input: GenerateVoiceInput) {
+  const identity = input.referenceAudio?.dataUrl || input.voiceDescription?.trim() || "thalika-voice";
+  const controls = `${input.cloneMode || "high_fidelity"}|${input.cloneStrength ?? 2}|${input.emotion}|${input.speed}`;
+  const digest = createHash("sha256").update(identity).update(controls).digest();
+  return digest.readUInt32BE(0) & 0x7fffffff;
+}
+
+function alternateTakeSeed(seed: number, takeIndex: number) {
+  return (seed + takeIndex * 104_729) & 0x7fffffff;
 }
 
 // QA flag: keep an un-mastered raw sibling output for A/B comparison in History.
@@ -114,8 +132,8 @@ async function submitVoxCPM2Generation(
   input: GenerateVoiceInput,
   uploadedReferencePath: string | undefined,
   scriptChunk: string,
-  chunkIndex: number,
-  chunkCount: number
+  isLocal: boolean,
+  consistencySeed: number,
 ) {
   const cloneMode = input.cloneMode || "high_fidelity";
   // cfg_value (a.k.a. cloneStrength): higher = stronger adherence to the reference = more consistent
@@ -137,7 +155,7 @@ async function submitVoxCPM2Generation(
     : `${emotionControls[input.emotion]}, ${speedControl(input.speed)}`;
   // Resolve per-endpoint: local server gets [inference_timesteps, retry_badcase]; a self-hosted
   // Space gets VOXCPM2_EXTRA_PARAMS; the public demo gets nothing (its 8-arg signature would 500).
-  const extraParams = await resolveExtraGenerateParams(await isLocalVoxCPM2Endpoint(), input.inferenceTimesteps);
+  const extraParams = resolveExtraGenerateParams(isLocal, input.inferenceTimesteps, consistencySeed);
   const data: unknown[] = [
     scriptChunk,
     controlInstruction,
@@ -157,7 +175,7 @@ async function submitVoxCPM2Generation(
     denoiseReference,
     // Local server (or a self-hosted Space via VOXCPM2_EXTRA_PARAMS) gets extra controls the
     // public demo rejects: [inference_timesteps, retry_badcase]. Resolved per-endpoint so the
-    // public Space's fixed 8-arg signature never receives a 9th arg.
+    // public Space's fixed 8-arg signature never receives local-only controls.
     ...extraParams
   ];
   const body = {
@@ -226,16 +244,46 @@ const SUBMIT_RETRY_ATTEMPTS = 5;
 const BADCASE_MAX_RETRIES = 2;
 const BADCASE_MIN_SECONDS = 6; // never second-guess short clips, where cps is noisy
 const BADCASE_MIN_CHARS_PER_SECOND = 4.5;
+const CONSISTENCY_MAX_PACE_RATIO = 1.35;
+const CONSISTENCY_MAX_LEVEL_DELTA_DB = 4;
 
-function charsPerSecond(chunkText: string, wav: Buffer) {
-  const seconds = pcm24DurationSeconds(wav);
-  return seconds > 0 ? chunkText.trim().length / seconds : Infinity;
+interface TakeStats {
+  charsPerSecond: number;
+  activeRmsDbfs: number;
+  seconds: number;
 }
 
-function isBadCaseTake(chunkText: string, wav: Buffer) {
-  const seconds = pcm24DurationSeconds(wav);
-  if (seconds <= BADCASE_MIN_SECONDS) return false;
-  return charsPerSecond(chunkText, wav) < BADCASE_MIN_CHARS_PER_SECOND;
+function median(values: number[]) {
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+}
+
+function takeStats(chunkText: string, wav: Buffer): TakeStats {
+  const measured = measurePcm24Chunk(wav);
+  return {
+    charsPerSecond: measured.durationSeconds > 0 ? chunkText.trim().length / measured.durationSeconds : Infinity,
+    activeRmsDbfs: measured.activeRmsDbfs,
+    seconds: measured.durationSeconds,
+  };
+}
+
+function consistencyScore(stats: TakeStats, accepted: TakeStats[]) {
+  if (!Number.isFinite(stats.charsPerSecond) || !Number.isFinite(stats.activeRmsDbfs)) return Infinity;
+  if (accepted.length === 0) return stats.charsPerSecond < BADCASE_MIN_CHARS_PER_SECOND ? 100 : 0;
+  const pace = median(accepted.map((item) => item.charsPerSecond));
+  const level = median(accepted.map((item) => item.activeRmsDbfs));
+  return Math.abs(Math.log(stats.charsPerSecond / pace)) * 10 + Math.abs(stats.activeRmsDbfs - level) / 3;
+}
+
+function isConsistencyOutlier(stats: TakeStats, accepted: TakeStats[]) {
+  if (!Number.isFinite(stats.charsPerSecond) || !Number.isFinite(stats.activeRmsDbfs)) return true;
+  if (stats.seconds > BADCASE_MIN_SECONDS && stats.charsPerSecond < BADCASE_MIN_CHARS_PER_SECOND) return true;
+  if (accepted.length === 0) return false;
+  const pace = median(accepted.map((item) => item.charsPerSecond));
+  const level = median(accepted.map((item) => item.activeRmsDbfs));
+  const paceRatio = Math.max(stats.charsPerSecond / pace, pace / stats.charsPerSecond);
+  return paceRatio > CONSISTENCY_MAX_PACE_RATIO || Math.abs(stats.activeRmsDbfs - level) > CONSISTENCY_MAX_LEVEL_DELTA_DB;
 }
 
 async function downloadRemoteAudio(audioUrl: string) {
@@ -282,6 +330,8 @@ async function generateRemote(input: GenerateVoiceInput) {
 
   await ensureDataDirs();
   const baseUrl = await getVoxCPM2BaseUrl();
+  const isLocal = await isLocalVoxCPM2Endpoint();
+  const consistencySeed = stableVoiceSeed(input);
   const chunks = splitScriptIntoChunks(input.script, REMOTE_TTS_CHUNK_CHARACTERS);
   if (chunks.length === 0) {
     throw new RemoteProviderError("Empty script", {
@@ -310,9 +360,12 @@ async function generateRemote(input: GenerateVoiceInput) {
   try {
     const audioChunkPaths: string[] = [];
     const remoteFormats = new Set<string>();
+    const acceptedTakeStats: TakeStats[] = [];
     await appendGenerationLog("generation_started", {
       jobId: input.jobId,
       provider: "voxcpm2",
+      backend: isLocal ? "local" : "huggingface-space",
+      consistencySeed: isLocal ? consistencySeed : "unsupported",
       characters: input.script.length,
       chunks: chunks.length
     });
@@ -327,9 +380,16 @@ async function generateRemote(input: GenerateVoiceInput) {
     // warms the weights before the real chunk 0 runs, so the first real chunk isn't penalized.
     // Cost: one extra full inference per multi-chunk job. Best-effort — a warmup failure must NOT
     // abort the job, the real generation still runs.
-    if (chunks.length > 1 && uploadedReferencePath) {
+    if (!isLocal && chunks.length > 1 && uploadedReferencePath) {
       try {
-        const warmupSubmission = await submitVoxCPM2Generation(baseUrl, input, uploadedReferencePath, "။", -1, chunks.length);
+        const warmupSubmission = await submitVoxCPM2Generation(
+          baseUrl,
+          input,
+          uploadedReferencePath,
+          "။",
+          false,
+          consistencySeed,
+        );
         await fetchVoxCPM2Result(baseUrl, warmupSubmission.eventId, input, -1, chunks.length);
         await appendGenerationLog("warmup_completed", { jobId: input.jobId });
       } catch (error) {
@@ -362,9 +422,10 @@ async function generateRemote(input: GenerateVoiceInput) {
 
       // One full attempt: enqueue (POST, retry 429/503 only — an ambiguous timeout must not
       // re-enqueue), read the SAME event id (retry safe), download (idempotent), decode to PCM.
-      const produceTake = async (): Promise<PcmWavConversionResult> => {
+      const produceTake = async (takeIndex: number): Promise<PcmWavConversionResult> => {
+        const takeSeed = alternateTakeSeed(consistencySeed, takeIndex);
         const submission = await withRetry(
-          () => submitVoxCPM2Generation(baseUrl, input, uploadedReferencePath, chunk, chunkIndex, chunks.length),
+          () => submitVoxCPM2Generation(baseUrl, input, uploadedReferencePath, chunk, isLocal, takeSeed),
           shouldRetrySubmit,
           SUBMIT_RETRY_ATTEMPTS,
           logStageRetry("submit")
@@ -385,23 +446,37 @@ async function generateRemote(input: GenerateVoiceInput) {
         }
       };
 
-      // Client-side retry_badcase: if a take runs far longer than the text warrants (a repeat or a
-      // leaked reference echo), regenerate and keep the densest (least-padded) take.
-      let converted = await produceTake();
-      for (let attempt = 1; attempt <= BADCASE_MAX_RETRIES && isBadCaseTake(chunk, converted.wav); attempt += 1) {
-        await appendGenerationLog("chunk_badcase_retry", {
+      // Keep first takes deterministic across chunks. Only an obvious pace/level outlier gets an
+      // alternate-seed take; choose the candidate closest to the rolling accepted baseline.
+      let converted = await produceTake(0);
+      let selectedStats = takeStats(chunk, converted.wav);
+      let selectedScore = consistencyScore(selectedStats, acceptedTakeStats);
+      let takeCount = 1;
+      for (
+        let attempt = 1;
+        attempt <= BADCASE_MAX_RETRIES && isConsistencyOutlier(selectedStats, acceptedTakeStats);
+        attempt += 1
+      ) {
+        await appendGenerationLog("chunk_consistency_retry", {
           jobId: input.jobId,
           chunk: chunkIndex + 1,
           chunks: chunks.length,
           attempt,
-          seconds: pcm24DurationSeconds(converted.wav).toFixed(2),
-          charsPerSecond: charsPerSecond(chunk, converted.wav).toFixed(2)
+          seconds: selectedStats.seconds.toFixed(2),
+          charsPerSecond: selectedStats.charsPerSecond.toFixed(2),
+          activeRmsDbfs: selectedStats.activeRmsDbfs.toFixed(2),
         });
-        const candidate = await produceTake();
-        if (charsPerSecond(chunk, candidate.wav) > charsPerSecond(chunk, converted.wav)) {
+        const candidate = await produceTake(attempt);
+        const candidateStats = takeStats(chunk, candidate.wav);
+        const candidateScore = consistencyScore(candidateStats, acceptedTakeStats);
+        takeCount += 1;
+        if (candidateScore < selectedScore) {
           converted = candidate;
+          selectedStats = candidateStats;
+          selectedScore = candidateScore;
         }
       }
+      acceptedTakeStats.push(selectedStats);
 
       const chunkPath = path.join(temporaryDir, `chunk-${chunkIndex}.wav`);
       await fs.writeFile(chunkPath, converted.wav);
@@ -413,8 +488,10 @@ async function generateRemote(input: GenerateVoiceInput) {
         chunks: chunks.length,
         remoteFormat: converted.remoteFormat,
         pcmWavBytes: converted.wav.length,
-        seconds: pcm24DurationSeconds(converted.wav).toFixed(2),
-        charsPerSecond: charsPerSecond(chunk, converted.wav).toFixed(2)
+        seconds: selectedStats.seconds.toFixed(2),
+        charsPerSecond: selectedStats.charsPerSecond.toFixed(2),
+        activeRmsDbfs: selectedStats.activeRmsDbfs.toFixed(2),
+        takesEvaluated: takeCount,
       });
       await input.onProgress?.({
         completedChunks: chunkIndex + 1,
@@ -451,6 +528,11 @@ async function generateRemote(input: GenerateVoiceInput) {
     for (const chunkPath of audioChunkPaths) {
       await trimSilenceEdges(chunkPath);
     }
+    const loudnessAdjustments = await matchPcm24ChunkLoudness(audioChunkPaths);
+    await appendGenerationLog("chunk_loudness_matched", {
+      jobId: input.jobId,
+      adjustmentsDb: loudnessAdjustments.map((value) => value.toFixed(2)).join(","),
+    });
     await mergeWavFiles(audioChunkPaths, audioFilePath, punctuationAwarePauses);
     await normalizeMasterPeak(audioFilePath);
     await appendGenerationLog("generation_completed", {
@@ -467,7 +549,7 @@ async function generateRemote(input: GenerateVoiceInput) {
       localAudioUrl: `/api/audio/${filename}`,
       rawAudioFile,
       metadata: {
-        remoteProvider: "huggingface-space",
+        inferenceBackend: isLocal ? "local-voxcpm2" : "huggingface-space",
         remoteBaseUrl: baseUrl,
         remoteFormats: [...remoteFormats].join(","),
         outputEncoding: "pcm_s24le",
@@ -485,6 +567,10 @@ async function generateRemote(input: GenerateVoiceInput) {
         chunkedGeneration: chunks.length > 1,
         chunkCount: chunks.length,
         chunkMaxCharacters: REMOTE_TTS_CHUNK_CHARACTERS,
+        deterministicChunks: isLocal,
+        consistencySeed: isLocal ? consistencySeed : 0,
+        consistencySelection: "pace-and-active-rms",
+        chunkLoudnessMatched: true,
         originalCharacters: input.script.length,
         timeoutMs: getHFRequestTimeout(),
         inferenceTimeoutMs: getHFInferenceTimeout()
