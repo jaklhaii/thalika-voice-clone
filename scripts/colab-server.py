@@ -35,21 +35,16 @@ import torch                    # noqa: E402
 from fastapi import FastAPI     # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-from voxcpm.cpm import VoxCPM   # noqa: E402
+from voxcpm import VoxCPM   # noqa: E402
 
 print(f"[km] device={DEVICE}", flush=True)
 model = VoxCPM.from_pretrained("openbmb/VoxCPM2")
 
 print("[km] warming up model...", flush=True)
 model.generate(
-    "This is a warm-up test sentence.",
-    audio=None,
-    temperature=0.9,
+    text="This is a warm-up test sentence.",
     cfg_value=2.0,
     inference_timesteps=8,
-    retry_badcase=True,
-    consistency_seed=0,
-    output_path="warmup.wav",
 )
 print("[km] model ready", flush=True)
 
@@ -84,21 +79,30 @@ def generate(req: GenRequest):
         ref.close()
 
         # High quality: 32 timesteps, strong guidance
-        wav = model.generate(
-            req.text,
-            control=req.style or None,
-            audio=ref.name,
-            temperature=0.9,
-            cfg_value=2.0,
-            inference_timesteps=32,
-            retry_badcase=True,
-            consistency_seed=0,
-            output_path="out.wav",
-        )
+        try:
+            wav = model.generate(
+                text=req.text,
+                audio=ref.name,
+                cfg_value=2.0,
+                inference_timesteps=32,
+                output_path="out.wav",
+            )
+        except TypeError:
+            wav = model.generate(
+                req.text,
+                audio=ref.name,
+                cfg_value=2.0,
+                inference_timesteps=32,
+                output_path="out.wav",
+            )
         if not wav:
             wav, sr = sf.read("out.wav")
+        elif isinstance(wav, tuple):
+            wav, sr = wav
+        if isinstance(wav, str):
+            wav, sr = sf.read(wav)
         out_buf = io.BytesIO()
-        sf.write(out_buf, wav, 48000, subtype="PCM_16", format="WAV")
+        sf.write(out_buf, wav, model.tts_model.sample_rate if hasattr(model, "tts_model") and model.tts_model else 48000, subtype="PCM_16", format="WAV")
         return {"audio": base64.b64encode(out_buf.getvalue()).decode(), "sample_rate": 48000}
     finally:
         os.unlink(tmp.name)
