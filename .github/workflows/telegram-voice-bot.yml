@@ -1,0 +1,83 @@
+# Thalika Telegram Voice Bot — real voice generation inside GitHub Actions.
+#
+# How it works:
+#   1. Installs VoxCPM2 (voxcpm==2.0.3) into a Python 3.11 venv.
+#   2. Downloads the ~8GB model weights (first run; HF cache persists between runs).
+#   3. Starts a long-polling Telegram bot (aitestuser2468_bot) in the same job:
+#        /voice <script>                -> voice design (no reference)
+#        /voice <style> | <script>      -> controllable cloning with style text
+#        reply to a voice msg + /voice  -> clone THAT voice (reference audio)
+#   4. Generates on CPU with low timesteps (fastest stable quality on free runners)
+#      and sends the 48kHz mono 24-bit PCM WAV back to the chat.
+#   5. Exits after 4h of silence (Actions 6h timeout guard) or after one request
+#      when run in "once" mode.
+#
+# Secrets required (Settings > Secrets and variables > Actions):
+#   TG_BOT_TOKEN  — set to the bot token.
+#
+# Limitations of free GitHub-hosted runners (CPU-only, 7GB RAM):
+#   - Keep scripts short (<= ~500 chars per /voice call). Longer scripts take
+#     tens of minutes on CPU and may hit the 6h run limit.
+#   - For production use, attach a self-hosted GPU runner.
+
+name: Thalika Telegram Voice Bot
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        description: "Run mode"
+        options: ["once", "serve"]
+        default: "once"
+
+jobs:
+  voice-bot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+    env:
+      HF_HOME: ${{ github.workspace }}/.cache/huggingface
+      VOXCPM_DEVICE: cpu
+      VOXCPM_LOAD_DENOISER: "0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: local-server/requirements.txt
+
+      - name: Install VoxCPM2 server dependencies
+        working-directory: local-server
+        run: |
+          python -m pip install -U pip
+          python -m pip install -r requirements.txt
+          python -m pip install -q ffmpeg-python 2>/dev/null || sudo apt-get install -y -q ffmpeg >/dev/null
+
+      - name: Download VoxCPM2 model weights (~8GB, cached across runs)
+        env:
+          HF_XET_HIGH_PERFORMANCE: 1
+          HF_HUB_DOWNLOAD_TIMEOUT: 120
+        run: |
+          python - <<'EOF'
+          from huggingface_hub import snapshot_download
+          path = snapshot_download('openbmb/VoxCPM2')
+          print("MODEL_DIR=" + path)
+          with open('model_dir.txt', 'w') as f:
+              f.write(path)
+          EOF
+          echo "VOXCPM_MODEL_DIR=$(cat model_dir.txt)" >> "$GITHUB_ENV"
+
+      - name: Run Telegram voice bot
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_MODE: ${{ github.event.inputs.mode || 'once' }}
+        run: |
+          if [ "$TG_MODE" = "once" ]; then
+            export TG_ONE_SHOT=1
+            echo "Bot will serve one /voice request then exit."
+          else
+            echo "Bot will run in serve mode until 4h of silence."
+          fi
+          python scripts/telegram-bot.py
