@@ -15,8 +15,8 @@ print("[km] installing dependencies...", flush=True)
 subprocess.run(
     [sys.executable, "-m", "pip", "install", "-q",
      "torch", "torchaudio", "transformers", "soundfile",
-     "fastapi", "uvicorn", "pydantic"],
-    check=False,
+     "fastapi", "uvicorn", "pydantic", "voxcpm"],
+    check=True,
 )
 print("[km] installing cloudflared...", flush=True)
 subprocess.run([
