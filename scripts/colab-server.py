@@ -1,44 +1,46 @@
-# KM Voice Clone - Colab GPU Server (FastAPI + ngrok)
-# Run inside Colab terminal with:
-#   python3 colab-server.py
-# Outputs PUBLIC_URL=<ngrok url> when ready. Keep the cell/terminal running.
+# KM Voice Clone - Colab GPU Server (FastAPI + Cloudflare Quick Tunnel)
+# Run inside Colab (foreground cell). Outputs PUBLIC_URL when ready.
 import base64
 import io
 import os
+import re
 import subprocess
 import sys
 import tempfile
 import time
 
-# ---------- 1. dependencies ----------
+DEVICE = "cuda"
+
+print("[km] installing dependencies...", flush=True)
 subprocess.run(
     [sys.executable, "-m", "pip", "install", "-q",
      "torch", "torchaudio", "transformers", "soundfile",
-     "fastapi", "uvicorn", "ngrok"],
+     "fastapi", "uvicorn", "pydantic"],
     check=False,
 )
+print("[km] installing cloudflared...", flush=True)
+subprocess.run([
+    "wget", "-q", "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64",
+    "-O", "/usr/local/bin/cloudflared",
+], check=False)
+subprocess.run(["chmod", "+x", "/usr/local/bin/cloudflared"], check=False)
+
+os.environ["HF_HOME"] = "/content/hf_cache"
+print("[km] downloading VoxCPM2 model (~8GB, may take 5-8 min)...", flush=True)
 
 import soundfile as sf          # noqa: E402
 import torch                    # noqa: E402
 from fastapi import FastAPI     # noqa: E402
 from pydantic import BaseModel  # noqa: E402
 
-print("[km] installing ok, downloading VoxCPM2 (~8GB)...", flush=True)
-
 from voxcpm.cpm import VoxCPM   # noqa: E402
 
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 print(f"[km] device={DEVICE}", flush=True)
+model = VoxCPM.from_pretrained("openbmb/VoxCPM2")
 
-MODEL_DIR = os.environ.get("VOXCPM_MODEL_DIR")
-if MODEL_DIR and os.path.isdir(MODEL_DIR):
-    model = VoxCPM.from_pretrained(MODEL_DIR)
-else:
-    model = VoxCPM.from_pretrained("openbmb/VoxCPM2")
-
-print("[km] warm-up...", flush=True)
+print("[km] warming up model...", flush=True)
 model.generate(
-    "Hello, this is a quick warm-up test.",
+    "This is a warm-up test sentence.",
     audio=None,
     temperature=0.9,
     cfg_value=2.0,
@@ -49,14 +51,14 @@ model.generate(
 )
 print("[km] model ready", flush=True)
 
-# ---------- 2. FastAPI ----------
+# ---------- FastAPI ----------
 app = FastAPI(title="KM Voice Clone")
 
 
 class GenRequest(BaseModel):
     text: str
     style: str | None = None
-    audio: str | None = None  # base64 WAV/OGG/M4A reference audio
+    audio: str | None = None  # base64 reference audio
 
 
 @app.post("/generate")
@@ -73,13 +75,13 @@ def generate(req: GenRequest):
 
     try:
         wav, sr = sf.read(tmp.name)
-        # VoxCPM works best with mono 16kHz-ish WAV
         if wav.ndim > 1:
             wav = wav.mean(axis=1)
         ref = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
         sf.write(ref.name, wav, sr)
         ref.close()
 
+        # High quality: 32 timesteps, strong guidance
         wav = model.generate(
             req.text,
             control=req.style or None,
@@ -107,16 +109,37 @@ def health():
     return {"status": "ok"}
 
 
-# ---------- 3. start server + ngrok ----------
-print("[km] starting uvicorn + ngrok...", flush=True)
+# ---------- Start server + Cloudflare tunnel ----------
+print("[km] starting uvicorn...", flush=True)
 proc = subprocess.Popen(
     [sys.executable, "-m", "uvicorn", "__main__:app", "--host", "0.0.0.0", "--port", "8000"],
+    stdout=subprocess.DEVNULL,
+    stderr=subprocess.DEVNULL,
 )
 
-import ngrok  # noqa: E402
+print("[km] starting Cloudflare quick tunnel...", flush=True)
+t = subprocess.Popen(
+    ["cloudflared", "tunnel", "--url", "http://localhost:8000"],
+    stdout=subprocess.PIPE,
+    stderr=subprocess.STDOUT,
+    text=True,
+)
+public_url = None
+start = time.time()
+while time.time() - start < 120:
+    line = t.stdout.readline()
+    if not line:
+        break
+    m = re.search(r"https://[a-z0-9-]+\.trycloudflare\.com", line)
+    if m:
+        public_url = m.group(0)
+        break
+    print("[km] tunnel:", line.strip(), flush=True)
 
-listener = ngrok.connect("8000")
-public_url = listener.url()
-print(f"PUBLIC_URL={public_url}", flush=True)
-while True:
-    time.sleep(10)
+if public_url:
+    print(f"PUBLIC_URL={public_url}", flush=True)
+    print("[km] KEEP THIS CELL RUNNING — server is live", flush=True)
+else:
+    print("[km] ERROR: could not get public URL", flush=True)
+
+proc.wait()
