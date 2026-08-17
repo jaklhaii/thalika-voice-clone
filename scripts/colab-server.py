@@ -18,6 +18,8 @@ subprocess.run(
      "fastapi", "uvicorn", "pydantic", "voxcpm"],
     check=True,
 )
+_install_check = subprocess.run([sys.executable, "-m", "pip", "show", "voxcpm"], capture_output=True, text=True)
+print("[km] voxcpm installed:", bool(_install_check.stdout), flush=True)
 print("[km] installing cloudflared...", flush=True)
 subprocess.run([
     "wget", "-q", "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64",
