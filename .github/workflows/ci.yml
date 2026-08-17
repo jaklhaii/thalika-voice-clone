@@ -1,0 +1,66 @@
+name: Thalika CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate Next.js and local server
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Node dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: TypeScript check
+        run: npm run lint
+
+      - name: Production build
+        run: npm run build
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Validate Python local server syntax
+        run: python -m py_compile local-server/server.py
+
+      - name: Upload build output for inspection
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: thalika-next-build
+          path: .next
+          if-no-files-found: ignore
+          retention-days: 7
+
+  model-notes:
+    name: Report model-run limitation
+    runs-on: ubuntu-latest
+    needs: validate
+    if: always()
+    steps:
+      - name: Explain audio generation requirement
+        run: |
+          echo "Build validation completed."
+          echo "Actual VoxCPM2 audio generation is not run on the default GitHub-hosted runner."
+          echo "It requires the Python dependencies, model download, sufficient RAM, and preferably a GPU."
+          echo "Use a self-hosted GPU runner for an actual audio smoke test."
+          echo "Do not put Telegram tokens, Gemini keys, or private reference audio in repository files."
+          echo "Use GitHub Actions Secrets or private artifact storage when needed."

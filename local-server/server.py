@@ -127,7 +127,11 @@ def generate(
             sf.write(ref_path, np.asarray(samples), int(sample_rate))
 
     cfg = float(cfg_value) if cfg_value is not None else 2.0
-    timesteps = int(inference_timesteps) if inference_timesteps else int(os.environ.get("VOXCPM_TIMESTEPS", "10"))
+    raw_timesteps = inference_timesteps if inference_timesteps else os.environ.get("VOXCPM_TIMESTEPS", "10")
+    try:
+        timesteps = min(50, max(4, int(raw_timesteps)))
+    except (TypeError, ValueError):
+        timesteps = 10
     # retry_badcase: True = auto-retry degenerate (repeat/echo) takes. Defaults True in the model;
     # the app always sends True for local. None (e.g. an older caller) -> keep the model default.
     do_retry = bool(retry_badcase) if retry_badcase is not None else True
@@ -144,7 +148,12 @@ def generate(
     # Tunable stability knob: lower ratio = retry more aggressively on degenerate takes (default 6.0).
     ratio = os.environ.get("VOXCPM_RETRY_RATIO")
     if ratio:
-        kwargs["retry_badcase_ratio_threshold"] = float(ratio)
+        try:
+            parsed_ratio = float(ratio)
+            if np.isfinite(parsed_ratio) and parsed_ratio > 0:
+                kwargs["retry_badcase_ratio_threshold"] = parsed_ratio
+        except (TypeError, ValueError):
+            print(f"[thalika-local] ignoring invalid VOXCPM_RETRY_RATIO={ratio!r}", file=sys.stderr, flush=True)
     if ref_path:
         kwargs["reference_wav_path"] = ref_path
         if use_prompt_text and prompt_text and prompt_text.strip():
