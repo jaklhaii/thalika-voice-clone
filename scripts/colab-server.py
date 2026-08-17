@@ -88,28 +88,21 @@ def _do_generate(req, raw_path):
         ref.close()
 
         # High quality: 32 timesteps, strong guidance
-        try:
-            wav = model.generate(
-                text=req.text,
-                audio=ref.name,
-                cfg_value=2.0,
-                inference_timesteps=32,
-                output_path="out.wav",
-            )
-        except TypeError:
-            wav = model.generate(
-                req.text,
-                audio=ref.name,
-                cfg_value=2.0,
-                inference_timesteps=32,
-                output_path="out.wav",
-            )
-        if not wav:
-            wav, sr = sf.read("out.wav")
-        elif isinstance(wav, tuple):
+        # Correct VoxCPM2 API: reference_wav_path (NOT "audio")
+        wav = model.generate(
+            text=req.text,
+            reference_wav_path=ref.name,
+            cfg_value=2.0,
+            inference_timesteps=32,
+        )
+        # wav is a numpy.ndarray (float32, CPU)
+        if isinstance(wav, tuple):
             wav, sr = wav
-        if isinstance(wav, str):
+        elif isinstance(wav, str):
             wav, sr = sf.read(wav)
+        if isinstance(wav, np.ndarray) and wav.dtype == "float32" and wav.max() <= 1.001:
+            pass  # fine
+        wav = np.asarray(wav, dtype="float32").ravel()
         out_sr = 48000
         try:
             out_sr = getattr(model, "tts_model", None) and model.tts_model.sample_rate or 48000
