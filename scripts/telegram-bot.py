@@ -2,11 +2,12 @@
 Thalika Telegram voice bot (GitHub Actions long-poll mode).
 
 Commands (sent to the bot in chat):
-    /voice <script>                    -> generate speech (voice design)
+    /voice <script>                    -> clone speech using the saved voice
     /voice <control> | <script>        -> controllable cloning with style text
 
-Reply to any voice message with "/voice <script>" to clone THAT voice
-(the replied audio becomes the reference).
+Send a voice/audio message directly -> it becomes the saved reference (only
+that voice is used for cloning). /voice with a reply to an audio message
+updates the saved reference and generates in one step.
 
 Runs until 4 hours of silence (Actions 6h limit guard) or when
 TG_EXIT_AFTER_IDLE seconds of idle pass. Set TG_ONE_SHOT=1 to exit after
@@ -39,6 +40,8 @@ last_request_id = 0
 idle_since = time.time()
 request_count = 0
 infer_lock = threading.Lock()
+voice_store = {}  # chat_id -> saved reference wav path (only the user's own voice)
+voice_lock = threading.Lock()
 
 
 def api(method: str, payload: dict, timeout: int = 60) -> dict:
@@ -104,6 +107,24 @@ def speak(text: str, control: str, ref_wav: str):
     )
 
 
+def save_voice_for_chat(chat_id: int, file_id: str, file_path: str) -> str:
+    """Download the user's voice message and store it as the chat reference."""
+    import subprocess
+    with urllib.request.urlopen(f"https://api.telegram.org/file/bot{TOKEN}/{file_path}", timeout=120) as r:
+        ogg = r.read()
+    tmp_ogg = tempfile.mktemp(prefix=f"vref-{chat_id}-", suffix=".ogg")
+    wav = tempfile.mktemp(prefix=f"vref-{chat_id}-", suffix=".wav")
+    with open(tmp_ogg, "wb") as f:
+        f.write(ogg)
+    subprocess.run(["ffmpeg", "-y", "-i", tmp_ogg, "-ar", "44100", "-ac", "1", wav],
+                   capture_output=True, timeout=120)
+    try:
+        os.unlink(tmp_ogg)
+    except OSError:
+        pass
+    return wav if os.path.isfile(wav) else tmp_ogg
+
+
 def generate_via_cli(text: str, control: str, ref_wav: str) -> str:
     """Generate speech with the CLI script (CPU-safe, no server needed)."""
     out = tempfile.mktemp(prefix="thalika-", suffix=".wav")
@@ -165,31 +186,59 @@ def poll():
             continue
         idle_since = time.time()
         if text.startswith("/start") or text.lower() in ("hi", "hello", "/help"):
-            send_message(chat_id, "🎙️ <b>Thalika Voice Bot</b> အသင့်ပါပီ။\n\nပုံစံ: <code>/voice &lt;စာသား&gt;</code>\nစတိုင်+စာသား: <code>/voice ချိုချိဳ | &lt;စာသား&gt;</code>\nvoice message ကို reply + /voice လုပ်ရင် အသံ clone လုပ်ပေးပါတယ်", reply_to=msg.get("message_id"))
-            continue
-        if not text.startswith("/voice"):
+            send_message(chat_id, "🎙️ <b>Thalika Voice Bot</b> အသင့်ပါပီ။\n\n၁။ <b>Voice message တစ်ခု ပို့ပါ</b> (သင့်အသံကို သိမ်းပေးပါမယ်)\n၂။ <code>/voice &lt;စာသား&gt;</code> ပို့ရင် <b>သင့်အသံနဲ့သာ</b> ထုတ်ပေးပါမယ်\n\nတစ်ခြားအသံ မသုံးပါဘူး။ နောက်ဆုံးပို့ထားတဲ့ voice message အသံကိုသာ သုံးပါမယ်။", reply_to=msg.get("message_id"))
             continue
         ref_wav = ""
+        voice_msg = msg.get("voice") or msg.get("audio") or msg.get("document")
+        if voice_msg and voice_msg.get("file_id"):
+            file_path = voice_msg.get("file_path")
+            if not file_path:
+                fr = api("getFile", {"file_id": voice_msg["file_id"]})
+                if fr.get("ok"):
+                    file_path = fr["result"]["file_path"]
+            if not file_path:
+                file_path = None
+            if not text.startswith("/voice"):
+                # plain voice/audio message -> save as the chat reference
+                if not file_path:
+                    send_message(chat_id, "❌ အသံဖိုင် ရယူမရပါ။ နောက်ထပ် voice message တစ်ခု ပို့ပေးပါ။", reply_to=msg.get("message_id"))
+                    continue
+                with voice_lock:
+                    saved = save_voice_for_chat(chat_id, voice_msg["file_id"], file_path)
+                if os.path.isfile(saved):
+                    voice_store[chat_id] = saved
+                    send_message(chat_id, "✅ သင့်အသံကို သိမ်းပြီးပါပီ။ ပြီးရင် <code>/voice &lt;စာသား&gt;</code> ပို့ပါ — သင့်အသံနဲ့သာ ထုတ်ပေးပါမယ်။", reply_to=msg.get("message_id"))
+                    continue
+                send_message(chat_id, "❌ အသံဖိုင် သိမ်းမရပါ။ နောက်ထပ် voice message တစ်ခု ပို့ပေးပါ။", reply_to=msg.get("message_id"))
+                continue
+            # /voice + audio attached -> save as reference, then fall through to generate
+            if not file_path:
+                send_message(chat_id, "❌ အသံဖိုင် ရယူမရပါ။ နောက်ထပ် voice message တစ်ခု ပို့ပေးပါ။", reply_to=msg.get("message_id"))
+                continue
+            with voice_lock:
+                saved = save_voice_for_chat(chat_id, voice_msg["file_id"], file_path)
+            if os.path.isfile(saved):
+                voice_store[chat_id] = saved
+        if not text.startswith("/voice"):
+            continue
+        with voice_lock:
+            ref_wav = voice_store.get(chat_id, "")
         replied = msg.get("reply_to_message") or {}
         audio = replied.get("voice") or replied.get("audio") or replied.get("document")
         if audio and audio.get("file_id"):
             fr = api("getFile", {"file_id": audio["file_id"]})
             if fr.get("ok"):
                 path = fr["result"]["file_path"]
-                with urllib.request.urlopen(f"https://api.telegram.org/file/bot{TOKEN}/{path}", timeout=120) as r, \
-                     tempfile.NamedTemporaryFile(prefix="ref-", suffix=".ogg", delete=False) as f:
-                    f.write(r.read())
-                    ref_wav = f.name
-                # convert to wav for the model
-                import subprocess
-                wav = ref_wav.rsplit(".", 1)[0] + ".wav"
-                subprocess.run(["ffmpeg", "-y", "-i", ref_wav, "-ar", "44100", "-ac", "1", wav],
-                               capture_output=True, timeout=120)
-                if os.path.isfile(wav):
-                    ref_wav = wav
+                with voice_lock:
+                    ref_wav = save_voice_for_chat(chat_id, audio["file_id"], path)
+                if os.path.isfile(ref_wav):
+                    voice_store[chat_id] = ref_wav
         body = text[len("/voice"):].strip()
         if not body:
-            send_message(chat_id, "🎙️ <b>Thalika Voice Bot</b> အသင့်ပါပြီ။\n\nပုံစံ: <code>/voice &lt;စာသား&gt;</code>\nစတိုင်ပါ: <code>/voice &lt;စတိုင်&gt; | &lt;စာသား&gt;</code>\nvoice message တစ်ခုကို reply + /voice လုပ်ရင် အသံ clone လုပ်ပေးပါတယ်", reply_to=msg.get("message_id"))
+            note = ""
+            if not ref_wav:
+                note = "\n\n⚠️ Voice message အရင်ပို့ပေးပါ — <b>သင့်အသံနဲ့သာ</b> ထုတ်ပေးပါမယ်။"
+            send_message(chat_id, "🎙️ <b>Thalika Voice Bot</b> အသင့်ပါပြီ။\n\nပုံစံ: <code>/voice &lt;စာသား&gt;</code>\nစတိုင်ပါ: <code>/voice &lt;စတိုင်&gt; | &lt;စာသား&gt;</code>" + note, reply_to=msg.get("message_id"))
             continue
         threading.Thread(target=handle_voice_request, args=(chat_id, body, ref_wav, msg.get("message_id")), daemon=True).start()
 
