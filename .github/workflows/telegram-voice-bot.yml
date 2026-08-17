@@ -51,9 +51,9 @@ jobs:
       - name: Install VoxCPM2 server dependencies
         working-directory: local-server
         run: |
-          python -m pip install -U pip
-          python -m pip install -r requirements.txt
-          python -m pip install -q ffmpeg-python 2>/dev/null || sudo apt-get install -y -q ffmpeg >/dev/null
+          python -m pip install -U -q pip wheel
+          python -m pip install -q -r requirements.txt
+          sudo apt-get install -y -q ffmpeg >/dev/null 2>&1 || true
 
       - name: Download VoxCPM2 model weights (~8GB, cached across runs)
         env:
@@ -68,6 +68,12 @@ jobs:
               f.write(path)
           EOF
           echo "VOXCPM_MODEL_DIR=$(cat model_dir.txt)" >> "$GITHUB_ENV"
+
+      - name: Warm-up the model (so the first /voice reply is fast)
+        env:
+          VOXCPM_MODEL_DIR: ${{ env.VOXCPM_MODEL_DIR }}
+        run: |
+          timeout 240 python scripts/voxcpm-generate.py --text "." --out /tmp/warmup.wav || true
 
       - name: Run Telegram voice bot
         env:

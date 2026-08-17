@@ -161,9 +161,14 @@ def poll():
         msg = upd.get("message") or {}
         chat_id = msg.get("chat", {}).get("id")
         text = (msg.get("text") or "").strip()
-        if not chat_id or not text.startswith("/voice"):
+        if not chat_id:
             continue
         idle_since = time.time()
+        if text.startswith("/start") or text.lower() in ("hi", "hello", "/help"):
+            send_message(chat_id, "🎙️ <b>Thalika Voice Bot</b> အသင့်ပါပီ။\n\nပုံစံ: <code>/voice &lt;စာသား&gt;</code>\nစတိုင်+စာသား: <code>/voice ချိုချိဳ | &lt;စာသား&gt;</code>\nvoice message ကို reply + /voice လုပ်ရင် အသံ clone လုပ်ပေးပါတယ်", reply_to=msg.get("message_id"))
+            continue
+        if not text.startswith("/voice"):
+            continue
         ref_wav = ""
         replied = msg.get("reply_to_message") or {}
         audio = replied.get("voice") or replied.get("audio") or replied.get("document")
