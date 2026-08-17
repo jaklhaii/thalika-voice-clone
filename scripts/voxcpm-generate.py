@@ -63,10 +63,10 @@ def main() -> int:
     ap.add_argument("--control", default="", help="(style/description) prefix -> controllable cloning")
     ap.add_argument("--audio", default=None, help="Reference wav for cloning")
     ap.add_argument("--out", required=True, help="Output wav path")
-    ap.add_argument("--timesteps", type=int, default=10, help="4-50 (CPU: keep small)")
+    ap.add_argument("--timesteps", type=int, default=4, help="4-50 (CPU: keep small for fast replies)")
     ap.add_argument("--cfg", type=float, default=2.0, help="cfg_value 1.0-4.0")
     ap.add_argument("--seed", type=int, default=0, help="Consistency seed")
-    ap.add_argument("--steps-threshold", type=int, default=250, help="Split text above this many chars")
+    ap.add_argument("--steps-threshold", type=int, default=10000, help="Split text above this many chars")
     args = ap.parse_args()
 
     text = args.text.strip()

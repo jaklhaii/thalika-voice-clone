@@ -113,7 +113,7 @@ def generate_via_cli(text: str, control: str, ref_wav: str) -> str:
     import subprocess
     cmd = [
         sys.executable, VOXCPM_SCRIPT,
-        "--text", text, "--out", out, "--timesteps", "8", "--cfg", "2.0",
+        "--text", text, "--out", out, "--timesteps", "4", "--cfg", "2.0",
     ]
     if control:
         cmd += ["--control", control]
@@ -138,7 +138,7 @@ def handle_voice_request(chat_id, text: str, ref_wav: str, reply_to):
     if len(script) > 10000:
         send_message(chat_id, "စာသား 10,000 characters ထက် ကျော်နေပါတယ်။ တိုတိုလေးနဲ့ ထပ်စမ်းပါ။", reply_to)
         return
-    send_message(chat_id, f"🎙️ အသံထုတ်နေပါပြီ... ({len(script)} chars, CPU mode ဖြစ်လို့ ၂-၁၀ မိနစ် ကြာနိုင်ပါတယ်)", reply_to)
+    send_message(chat_id, f"🎙️ အသံထုတ်နေပါပြီ... ({len(script)} chars) CPU-only server ဖြစ်လို့ ၁-၅ မိနစ် ကြာနိုင်ပါတယ်", reply_to)
     start = time.time()
     try:
         with infer_lock:
