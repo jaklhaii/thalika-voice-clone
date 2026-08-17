@@ -29,6 +29,8 @@ subprocess.run([
 subprocess.run(["chmod", "+x", "/usr/local/bin/cloudflared"], check=False)
 
 os.environ["HF_HOME"] = "/content/hf_cache"
+os.environ["HF_HUB_CACHE"] = "/content/hf_cache"
+print("[km] HF cache = /content/hf_cache (persistent)", flush=True)
 print("[km] downloading VoxCPM2 model (~8GB, may take 5-8 min)...", flush=True)
 
 import soundfile as sf          # noqa: E402
@@ -42,11 +44,15 @@ print(f"[km] device={DEVICE}", flush=True)
 model = VoxCPM.from_pretrained("openbmb/VoxCPM2")
 
 print("[km] warming up model...", flush=True)
-model.generate(
-    text="This is a warm-up test sentence.",
-    cfg_value=2.0,
-    inference_timesteps=8,
-)
+try:
+    model.generate(
+        text="This is a warm-up test sentence.",
+        cfg_value=2.0,
+        inference_timesteps=8,
+    )
+    print("[km] warmup ok", flush=True)
+except Exception as _we:
+    print(f"[km] warmup failed (non-fatal): {_we}", flush=True)
 print("[km] model ready", flush=True)
 
 # ---------- FastAPI ----------
@@ -75,9 +81,10 @@ def generate(req: GenRequest):
         return _do_generate(req, tmp.name)
     except Exception as e:
         import traceback as _tb
-        sys.stderr.write(_tb.format_exc())
+        _msg = _tb.format_exc()
+        sys.stderr.write(_msg)
         sys.stderr.flush()
-        return {"error": "generation failed: " + str(e), "tb": _tb.format_exc()[:2500]}
+        return {"error": "generation failed: " + str(e), "tb": _msg[:2500]}
 
 
 def _decode_ref(raw_path):
