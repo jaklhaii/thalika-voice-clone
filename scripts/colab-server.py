@@ -71,11 +71,20 @@ def generate(req: GenRequest):
     tmp.close()
 
     try:
-        wav, sr = sf.read(tmp.name)
+        return _do_generate(req, tmp.name)
+    except Exception as e:
+        import traceback as _tb
+        _tb.print_exc(flush=True)
+        return {"error": "generation failed: " + str(e)}
+
+
+def _do_generate(req, raw_path):
+    try:
+        wav, sr = sf.read(raw_path)
         if wav.ndim > 1:
             wav = wav.mean(axis=1)
         ref = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        sf.write(ref.name, wav, sr)
+        sf.write(ref.name, wav.astype("float32"), sr)
         ref.close()
 
         # High quality: 32 timesteps, strong guidance
@@ -101,11 +110,17 @@ def generate(req: GenRequest):
             wav, sr = wav
         if isinstance(wav, str):
             wav, sr = sf.read(wav)
+        out_sr = 48000
+        try:
+            out_sr = getattr(model, "tts_model", None) and model.tts_model.sample_rate or 48000
+        except Exception:
+            out_sr = 48000
+        wav = np.asarray(wav, dtype="float32")
         out_buf = io.BytesIO()
-        sf.write(out_buf, wav, model.tts_model.sample_rate if hasattr(model, "tts_model") and model.tts_model else 48000, subtype="PCM_16", format="WAV")
-        return {"audio": base64.b64encode(out_buf.getvalue()).decode(), "sample_rate": 48000}
+        sf.write(out_buf, wav, out_sr, subtype="PCM_16", format="WAV")
+        return {"audio": base64.b64encode(out_buf.getvalue()).decode(), "sample_rate": out_sr}
     finally:
-        os.unlink(tmp.name)
+        os.unlink(raw_path)
         if os.path.exists(ref.name):
             os.unlink(ref.name)
 
