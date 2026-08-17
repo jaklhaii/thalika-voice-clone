@@ -62,30 +62,34 @@ def send_message(chat_id, text: str, reply_to=None):
 
 
 def send_voice(chat_id, wav_path: str, reply_to=None):
+    # Telegram expects normal text fields plus one binary field in multipart/form-data.
+    # Keep these separate; treating chat_id as a file tuple causes a runtime unpack error.
+    boundary = f"----TG{random.randint(10**8, 10**9)}"
+    body = bytearray()
+
+    def add_field(name, value):
+        body.extend(f"--{boundary}\r\n".encode())
+        body.extend(f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode())
+        body.extend(str(value).encode())
+        body.extend(b"\r\n")
+
+    add_field("chat_id", chat_id)
+    if reply_to:
+        add_field("reply_to_message_id", reply_to)
     with open(wav_path, "rb") as f:
-        payload = {
-            "chat_id": chat_id, "voice": ("voice.wav", f, "audio/mpeg"),
-            **({"reply_to_message_id": reply_to} if reply_to else {}),
-        }
-        # multipart manually for urllib
-        import urllib.parse
-        boundary = f"----TG{random.randint(10**8,10**9)}"
-        body = bytearray()
-        for name, (filename, fileobj, ctype) in list(payload.items()):
-            body += f"--{boundary}\r\n".encode()
-            if filename:
-                body += f'Content-Disposition: form-data; name="{name}"; filename="{filename}"\r\n'.encode()
-                body += f"Content-Type: {ctype}\r\n\r\n".encode()
-                body += fileobj.read() + b"\r\n"
-            else:
-                body += f'Content-Disposition: form-data; name="{name}"\r\n\r\n{str(name)}\r\n'.encode()
-        body += f"--{boundary}--\r\n".encode()
-        req = urllib.request.Request(
-            f"{BOT_API}/sendVoice", data=bytes(body),
-            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
-        )
-        with urllib.request.urlopen(req, timeout=300) as r:
-            return json.load(r)
+        body.extend(f"--{boundary}\r\n".encode())
+        body.extend(b'Content-Disposition: form-data; name="voice"; filename="voice.wav"\r\n')
+        body.extend(b"Content-Type: audio/wav\r\n\r\n")
+        body.extend(f.read())
+        body.extend(b"\r\n")
+    body.extend(f"--{boundary}--\r\n".encode())
+
+    req = urllib.request.Request(
+        f"{BOT_API}/sendVoice", data=bytes(body),
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
+    with urllib.request.urlopen(req, timeout=300) as r:
+        return json.load(r)
 
 
 def speak(text: str, control: str, ref_wav: str):
