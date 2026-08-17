@@ -141,6 +141,30 @@ if public_url:
 else:
     print("[km] ERROR: could not get public URL", flush=True)
 
-print("[km] starting uvicorn (blocking)...", flush=True)
+import threading  # noqa: E402
+import asyncio  # noqa: E402
 import uvicorn  # noqa: E402
-uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")
+
+def _run_server():
+    asyncio.set_event_loop(asyncio.new_event_loop())
+    uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")
+
+print("[km] starting uvicorn in thread...", flush=True)
+th = threading.Thread(target=_run_server, daemon=True)
+th.start()
+time.sleep(3)
+
+# sanity check: uvicorn must be listening
+for _ in range(20):
+    try:
+        urllib.request.urlopen("http://localhost:8000/health")
+        print("[km] uvicorn listening on :8000", flush=True)
+        break
+    except Exception:
+        time.sleep(1)
+else:
+    print("[km] ERROR: uvicorn failed to start", flush=True)
+
+# keep cell alive forever (server must stay running)
+while True:
+    time.sleep(60)
