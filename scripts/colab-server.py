@@ -10,7 +10,7 @@ import sys
 import tempfile
 import time
 
-DEVICE = "cuda"
+import torch as _t; DEVICE = "cuda" if _t.cuda.is_available() else "cpu"; print("[km] torch cuda available:", _t.cuda.is_available(), flush=True)
 
 print("[km] installing dependencies...", flush=True)
 subprocess.run(
