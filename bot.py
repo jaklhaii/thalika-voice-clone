@@ -635,33 +635,53 @@ def poll(offset: int, timeout: int = 30):
     return api("getUpdates", {"offset": offset, "timeout": timeout, "allowed_updates": ["message"]}, timeout=timeout + 10)
 
 
+# ---------------- GITHUB ACTIONS MODE ----------------
+# Run with: RUN_MODE=github python3 bot.py
+# One-shot: process all pending updates once, then exit. Used by scheduled GH Action.
+# Default (RUN_MODE=persistent): long-poll loop forever.
+def _run_mode():
+    return os.environ.get("RUN_MODE", "persistent")
+
+
 def run():
     if not BOT_TOKEN or BOT_TOKEN.startswith("PUT_"):
         print("ERROR: set BOT_TOKEN, SERVER_URL, OWNER_ID at the top of this file")
         raise SystemExit(1)
-    print(f"[{BOT_NAME}] starting... (owner={OWNER_ID})")
+    mode = _run_mode()
+    print(f"[{BOT_NAME}] starting... (owner={OWNER_ID}, mode={mode})")
     print(f"[{BOT_NAME}] server: {SERVER_URL}")
     if not server_health(timeout=15):
         print(f"[{BOT_NAME}] WARNING: server health check failed — check SERVER_URL")
-
     offset = 0
     while True:
         try:
             r = poll(offset)
         except Exception as e:
             print(f"[{BOT_NAME}] poll error: {e}; retrying in 5s")
+            if mode == "github":
+                return
             time.sleep(5)
             continue
         if not r.get("ok"):
             print(f"[{BOT_NAME}] api error: {r.get('description')}; retrying in 5s")
+            if mode == "github":
+                return
             time.sleep(5)
             continue
-        for upd in r.get("result", []):
+        updates = r.get("result", [])
+        if not updates:
+            if mode == "github":
+                print(f"[{BOT_NAME}] no pending updates — done")
+                return
+        for upd in updates:
             offset = max(offset, upd.get("update_id", 0) + 1)
             try:
                 handle_message(upd)
             except Exception as e:
                 print(f"[{BOT_NAME}] handler error: {e}")
+        if mode == "github":
+            print(f"[{BOT_NAME}] processed {len(updates)} updates — done")
+            return
         time.sleep(0.2)
 
 

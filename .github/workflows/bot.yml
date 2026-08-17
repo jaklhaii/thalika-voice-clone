@@ -1,0 +1,24 @@
+name: KM Voice Clone Bot
+
+on:
+  schedule:
+    # Check for new Telegram messages every 2 minutes
+    - cron: "*/2 * * * *"
+  workflow_dispatch:  # also allows manual one-click run
+
+jobs:
+  bot:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run bot (process pending messages once)
+        env:
+          RUN_MODE: github
+        run: python3 bot.py
