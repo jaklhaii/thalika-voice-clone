@@ -115,14 +115,7 @@ def health():
     return {"status": "ok"}
 
 
-# ---------- Start server + Cloudflare tunnel ----------
-print("[km] starting uvicorn...", flush=True)
-proc = subprocess.Popen(
-    [sys.executable, "-m", "uvicorn", "__main__:app", "--host", "0.0.0.0", "--port", "8000"],
-    stdout=subprocess.DEVNULL,
-    stderr=subprocess.DEVNULL,
-)
-
+# ---------- Start Cloudflare tunnel first, then run uvicorn directly ----------
 print("[km] starting Cloudflare quick tunnel...", flush=True)
 t = subprocess.Popen(
     ["cloudflared", "tunnel", "--url", "http://localhost:8000"],
@@ -148,4 +141,6 @@ if public_url:
 else:
     print("[km] ERROR: could not get public URL", flush=True)
 
-proc.wait()
+print("[km] starting uvicorn (blocking)...", flush=True)
+import uvicorn  # noqa: E402
+uvicorn.run(app, host="0.0.0.0", port=8000, log_level="warning")
