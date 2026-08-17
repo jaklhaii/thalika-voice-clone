@@ -75,7 +75,8 @@ def generate(req: GenRequest):
         return _do_generate(req, tmp.name)
     except Exception as e:
         import traceback as _tb
-        _tb.print_exc(flush=True)
+        sys.stderr.write(_tb.format_exc())
+        sys.stderr.flush()
         return {"error": "generation failed: " + str(e), "tb": _tb.format_exc()[:2500]}
 
 
