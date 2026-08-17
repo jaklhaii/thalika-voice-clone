@@ -2,6 +2,7 @@
 # Run inside Colab (foreground cell). Outputs PUBLIC_URL when ready.
 import base64
 import io
+import numpy as np
 import os
 import re
 import subprocess
@@ -75,12 +76,27 @@ def generate(req: GenRequest):
     except Exception as e:
         import traceback as _tb
         _tb.print_exc(flush=True)
-        return {"error": "generation failed: " + str(e)}
+        return {"error": "generation failed: " + str(e), "tb": _tb.format_exc()[:2500]}
 
+
+def _decode_ref(raw_path):
+    """Decode reference audio from any common format (wav/ogg/mp3/m4a/opus)."""
+    try:
+        wav, sr = sf.read(raw_path)
+        return np.asarray(wav, dtype="float32"), int(sr)
+    except Exception as e1:
+        pass
+    try:
+        import torchaudio
+        t, tsr = torchaudio.load(raw_path)
+        wav = t.to("cpu").float().mean(dim=0).numpy()
+        return wav.astype("float32"), int(tsr)
+    except Exception as e2:
+        raise RuntimeError(f"cannot decode reference audio (sf: {e1}; torchaudio: {e2})")
 
 def _do_generate(req, raw_path):
     try:
-        wav, sr = sf.read(raw_path)
+        wav, sr = _decode_ref(raw_path)
         if wav.ndim > 1:
             wav = wav.mean(axis=1)
         ref = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
