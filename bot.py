@@ -21,6 +21,7 @@ Run:  python3 bot.py
 """
 
 import base64
+import hashlib
 import json
 import os
 import sqlite3
@@ -30,8 +31,15 @@ import urllib.request
 
 # ---------------- CONFIG ----------------
 BOT_TOKEN = "8924460807:AAENhVbQfpSGa_vgVkvH5PP3fUEDrrJBd7c"
-SERVER_URL = "https://sally-dis-tune-indicated.trycloudflare.com"  # Colab GPU server (changes each Colab session restart)
+SERVER_URL = ""  # external voice server URL (empty => GitHub-only queue mode)
 OWNER_ID = 8970380146
+
+# GitHub-only generation queue mode:
+# text+reference jobs are committed to scripts/ghq/pending/ in this repo.
+# The GitHub Action runs the CPU worker (GGUF VoxCPM2, ~3.3GB, CPU) which
+# writes scripts/ghq/done/{job_id}.json; the bot picks it up next run and
+# sends the voice message. Requires GEN_MODE=github env (set in bot.yml).
+GEN_MODE = os.environ.get("GEN_MODE", "server")  # "server" | "github"
 
 BOT_NAME = "KM Voice Clone"
 BOT_VERSION = "1.0"
@@ -342,6 +350,181 @@ def generate_voice(text: str, reference_b64: str, style: str = None, chat_id=Non
     return wav, None
 
 
+# ---------------- GITHUB QUEUE (GEN_MODE=github) ----------------
+# Repo: jaklhaii/thalika-voice-clone, branch main. Uses GITHUB_TOKEN env
+# (auto-provided by GitHub Actions) to push job files via the Contents API.
+
+def _gh_repo():
+    owner_repo = os.environ.get("GH_REPO", "jaklhaii/thalika-voice-clone")
+    return os.environ.get("GH_TOKEN", ""), owner_repo
+
+
+def _gh_api(method: str, path: str, body=None, base64_content=None, timeout: int = 60):
+    """GitHub REST API call (Contents API for repo files). Returns parsed JSON dict."""
+    token, repo = _gh_repo()
+    url = f"https://api.github.com/repos/{repo}/{path}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if body is not None:
+        headers["Content-Type"] = "application/json"
+        data = json.dumps(body).encode()
+    elif base64_content is not None:
+        data = json.dumps({"message": "km voice clone job", "content": base64_content, "branch": "main"}).encode()
+    else:
+        data = None
+    req = urllib.request.Request(url, data=data, headers=headers, method=method.upper())
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read().decode()), resp.status
+    except urllib.error.HTTPError as e:
+        return {"error": f"HTTP {e.code}", "body": e.read().decode(errors="replace")[:300]}, e.code
+    except Exception as e:
+        return {"error": str(e)}, 0
+
+
+def _queue_dir():
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", "ghq")
+
+
+def _queue_put(path_in_repo: str, content: bytes, commit_msg: str) -> bool:
+    """PUT file content into the repo via Contents API (b64 content object)."""
+    body = {"message": commit_msg, "content": base64.b64encode(content).decode(), "branch": "main"}
+    res, status = _gh_api("PUT", f"contents/{path_in_repo}", body=body)
+    if status not in (200, 201):
+        print(f"[queue] PUT {path_in_repo} failed: {res.get('error')}", flush=True)
+        return False
+    return True
+
+
+def _queue_get(path_in_repo: str):
+    """GET file from repo; returns (bytes, sha) or (None, None)."""
+    res, status = _gh_api("GET", f"contents/{path_in_repo}?ref=main")
+    if status != 200 or not isinstance(res, dict):
+        return None, None
+    return base64.b64decode(res["content"]), res.get("sha")
+
+
+def _queue_delete(path_in_repo: str, sha: str) -> bool:
+    body = {"message": "km voice clone cleanup", "sha": sha, "branch": "main"}
+    res, status = _gh_api("DELETE", f"contents/{path_in_repo}", body=body)
+    return status in (200, 202)
+
+
+def _pending_path(job_id: str) -> str:
+    return f"scripts/ghq/pending/{job_id}.json"
+
+
+def _done_path(job_id: str) -> str:
+    return f"scripts/ghq/done/{job_id}.json"
+
+
+def _queue_submit_job(user_id: int, chat_id: int, start_msg_id, text: str, voice_name: str) -> str:
+    job_id = hashlib.md5(f"{user_id}:{chat_id}:{text}:{voice_name}:{time.time()}".encode()).hexdigest()[:16]
+    job = {
+        "job_id": job_id,
+        "user_id": user_id,
+        "chat_id": chat_id,
+        "start_msg_id": start_msg_id,
+        "text": text,
+        "voice_name": voice_name.strip().lower(),
+        "ts": int(time.time()),
+    }
+    _queue_put(_pending_path(job_id), json.dumps(job).encode(), f"voice job {job_id}")
+    return job_id
+
+
+def _queue_save_ref(owner_id: int, voice_name: str, audio_b64: str) -> bool:
+    wav = base64.b64decode(audio_b64)
+    name = voice_name.strip().lower()
+    return _queue_put(f"scripts/ghq/refs/{owner_id}_{name}.wav", wav, f"voice ref {owner_id}/{name}")
+
+
+def _queue_pickup_done() -> list:
+    """Scan scripts/ghq/done/ for finished jobs, download and return list of dicts."""
+    token, repo = _gh_repo()
+    url = f"https://api.github.com/repos/{repo}/contents/scripts/ghq/done?ref=main"
+    headers = {"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"}
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            files = json.loads(resp.read().decode())
+    except Exception as e:
+        print(f"[queue] scan done/ failed: {e}", flush=True)
+        return []
+    if not isinstance(files, list):
+        return []
+    out = []
+    for entry in files:
+        if not entry.get("name", "").endswith(".json"):
+            continue
+        b, sha = _queue_get(f"scripts/ghq/done/{entry['name']}")
+        if not b:
+            continue
+        try:
+            job = json.loads(b.decode())
+        except Exception:
+            _queue_delete(f"scripts/ghq/done/{entry['name']}", sha)
+            continue
+        job["_sha"] = sha
+        job["_file"] = entry["name"]
+        out.append(job)
+    return out
+
+
+def generate_voice_queue(text: str, reference_b64: str, voice_name: str,
+                         user_id: int, chat_id: int, start_msg_id) -> tuple:
+    """GitHub-only mode: commit ref + job, return (job_id_or_None, error)."""
+    name = voice_name.strip().lower()
+    if not _queue_save_ref(user_id, name, reference_b64):
+        return None, "reference file upload failed"
+    if api("editMessageText", {
+        "chat_id": chat_id, "message_id": start_msg_id,
+        "text": ("🎙 <b>အသံထုတ်မည့်အလုပ်</b> GitHub runner queue ထဲ ထည့်ပြီးပါပီ။\n"
+                 "⚠️ Free runner (2-core CPU) ဖြစ်လို့ <b>၁၀–၂၀ မိနစ်</b> ကြာနိုင်ပါတယ်။\n"
+                 "ပြီးရင် bot က အလိုအလျောက် အသံပြန်ပို့ပေးပါမယ်။\n\n"
+                 "(အသံရောင်းဖိုင် scripts/ghq/pending/ ထဲမှာ စောင့်နေပါတယ်)"),
+        "parse_mode": "HTML",
+    }).get("ok") is not True:
+        api("sendMessage", {
+            "chat_id": chat_id, "reply_to_message_id": start_msg_id,
+            "text": ("🎙 အလုပ် queue ထဲ ထည့်ပြီးပါပီ — ၁၀–၂၀ မိနစ် ကြာနိုင်ပါတယ်၊ "
+                     "ပြီးရင် အလိုအလျောက် ပြန်ပို့ပေးပါမယ်။"),
+        })
+    job_id = _queue_submit_job(user_id, chat_id, start_msg_id, text, voice_name)
+    return job_id, None
+
+
+def deliver_queued_voices() -> int:
+    """Send finished voice jobs from scripts/ghq/done/; return count delivered."""
+    n = 0
+    for job in _queue_pickup_done():
+        job_id = job.get("job_id", "?")
+        chat_id = job.get("chat_id")
+        if not chat_id:
+            continue
+        if "error" in job:
+            api("sendMessage", {
+                "chat_id": chat_id,
+                "text": f"⚠️ အသံထုတ်မှု မအောင်မြင်ပါ (job {job_id}):\n{job['error']}",
+                "reply_markup": kb_reply_main(),
+            })
+        else:
+            try:
+                wav = base64.b64decode(job["wav_b64"])
+            except Exception:
+                api("sendMessage", {"chat_id": chat_id, "text": "⚠️ အသံဖိုင် ဖတ်လို့မရပါ — ထပ်ကြိုးစားကြည့်ပါ။", "reply_markup": kb_reply_main()})
+            else:
+                cap = f"{BOT_NAME} — {job.get('duration_s', '?')}s @48kHz"
+                api("sendMessage", {"chat_id": chat_id, "text": f"✅ အသံထုတ်ပြီးပါပီ ({job.get('duration_s', '?')} စကကန့်)", "reply_markup": kb_reply_main()})
+                api_file("sendVoice", {"voice": ("voice.wav", "audio/wav", wav)}, {"chat_id": chat_id, "caption": cap})
+        _queue_delete(f"scripts/ghq/done/{job['_file']}", job["_sha"])
+        n += 1
+    return n
+
+
 def server_health(timeout: int = 10):
     try:
         url = f"{SERVER_URL}/health"
@@ -459,6 +642,12 @@ def handle_message(update: dict):
             return
         start_r = send_message(chat_id, "🎙 Clone အသံ ထုတ်နေပါတယ်... (1–3 မိနစ်)\n[▓▓▓▓▓▓▓▓▓▓] 0%")
         start_msg_id = (start_r.get("result") or {}).get("message_id")
+        if GEN_MODE == "github":
+            job_id, err = generate_voice_queue(text, voice[3], voice[2], uid, chat_id, start_msg_id)
+            if err:
+                send_message(chat_id, f"⚠️ အသံထုတ်မှု မအောင်မြင်:\n{err}", reply_markup=kb_reply_main())
+            _state[chat_id] = {}
+            return
         wav, err = generate_voice(text, voice[3], chat_id=chat_id, start_msg_id=start_msg_id)
         if err:
             send_message(chat_id, f"⚠️ အသံထုတ်မှု မအောင်မြင်:\n{err}", reply_markup=kb_reply_main())
@@ -633,6 +822,11 @@ def handle_message(update: dict):
             return
         start_r = send_message(chat_id, "🎙 အသံထုတ်နေပါတယ်...\n[▓▓▓▓▓▓▓▓▓▓] 0%")
         start_msg_id = (start_r.get("result") or {}).get("message_id")
+        if GEN_MODE == "github":
+            job_id, err = generate_voice_queue(args.strip(), voice[3], voice[2], uid, chat_id, start_msg_id)
+            if err:
+                send_message(chat_id, f"⚠️ မအောင်မြင်:\n{err}", reply_markup=kb_reply_main())
+            return
         wav, err = generate_voice(args.strip(), voice[3], chat_id=chat_id, start_msg_id=start_msg_id)
         if err:
             send_message(chat_id, f"⚠️ မအောင်မြင်:\n{err}", reply_markup=kb_reply_main())
@@ -680,9 +874,18 @@ def run():
         print("ERROR: set BOT_TOKEN, SERVER_URL, OWNER_ID at the top of this file")
         raise SystemExit(1)
     mode = _run_mode()
-    print(f"[{BOT_NAME}] starting... (owner={OWNER_ID}, mode={mode})")
-    print(f"[{BOT_NAME}] server: {SERVER_URL}")
-    if not server_health(timeout=15):
+    print(f"[{BOT_NAME}] starting... (owner={OWNER_ID}, mode={mode}, gen_mode={GEN_MODE})")
+    print(f"[{BOT_NAME}] server: {SERVER_URL or '(none — GitHub queue mode)'}")
+    if GEN_MODE == "github":
+        token, repo = _gh_repo()
+        print(f"[{BOT_NAME}] github queue: repo={repo} token={'ok' if token else 'MISSING!'}")
+        # deliver finished jobs first
+        try:
+            done_n = deliver_queued_voices()
+            print(f"[{BOT_NAME}] delivered {done_n} finished job(s)")
+        except Exception as e:
+            print(f"[{BOT_NAME}] pickup error: {e}")
+    elif SERVER_URL and not server_health(timeout=15):
         print(f"[{BOT_NAME}] WARNING: server health check failed — check SERVER_URL")
     offset = 0
     while True:
