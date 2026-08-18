@@ -13,6 +13,18 @@ import time
 
 import torch as _t; DEVICE = "cuda" if _t.cuda.is_available() else "cpu"; print("[km] torch cuda available:", _t.cuda.is_available(), flush=True)
 
+# --- Reduce OOM risk on 12GB CPU runtime: add 4GB swap ---
+try:
+    if not os.path.exists('/content/swapfile'):
+        subprocess.run(['fallocate', '-l', '4G', '/content/swapfile'], check=False)
+        subprocess.run(['chmod', '600', '/content/swapfile'], check=False)
+        subprocess.run(['mkswap', '/content/swapfile'], check=False)
+    subprocess.run(['swapon', '/content/swapfile'], check=False)
+    _sw = subprocess.run(['free', '-h'], capture_output=True, text=True).stdout.strip()
+    print("[km] swap ready:\n" + _sw, flush=True)
+except Exception as _se:
+    print(f"[km] swap setup skipped (non-fatal): {_se}", flush=True)
+
 print("[km] installing dependencies...", flush=True)
 subprocess.run(
     [sys.executable, "-m", "pip", "install", "-q",
