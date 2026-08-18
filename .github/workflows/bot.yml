@@ -28,7 +28,38 @@ jobs:
           GEN_MODE: github
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-        run: python3 bot.py
+        run: python3 bot.py 2>&1 | tee bot_run.log; echo "EXIT=$?"
+
+      - name: Save getUpdates debug info
+        run: |
+          echo "--- env ---"
+          env | grep -E '^(RUN_MODE|GEN_MODE|BOT_TOKEN|HOME|GITHUB)' | sed 's/^BOT_TOKEN=.*/BOT_TOKEN=*** (set)/'
+          python3 - <<'PY' | head -c 4000
+import os, json, urllib.request
+token = os.environ.get("BOT_TOKEN", "")
+if not token:
+    print("BOT_TOKEN EMPTY (bot.py falls back to hardcoded token)")
+    token = "PUT_BOT_TOKEN_HERE"
+url = f"https://api.telegram.org/bot{token}/getUpdates?timeout=5&allowed_updates=message"
+try:
+    with urllib.request.urlopen(urllib.request.Request(url), timeout=15) as r:
+        d = json.load(r)
+        res = d.get("result", [])
+        print("ok:", d.get("ok"), "updates:", len(res))
+        for u in res[:5]:
+            m = u["message"]
+            print(u["update_id"], m.get("from", {}).get("id"), repr((m.get("text") or "")[:30]))
+except Exception as e:
+    print("getUpdates error:", e)
+PY
+
+      - name: Upload bot log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bot-run-${{ github.run_id }}
+          path: bot_run.log
+          retention-days: 3
 
       - name: Check pending jobs
         id: pending

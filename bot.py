@@ -858,6 +858,10 @@ def handle_message(update: dict):
 # ---------------- POLL LOOP ----------------
 
 def poll(offset: int, timeout: int = 30):
+    try:
+        open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gh_poll_last.json"), "w").write(str(offset))
+    except Exception:
+        pass
     return api("getUpdates", {"offset": offset, "timeout": timeout, "allowed_updates": ["message"]}, timeout=timeout + 10)
 
 
