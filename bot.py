@@ -132,6 +132,15 @@ def delete_voice(owner_id: int, name: str) -> bool:
 
 # ---------------- TELEGRAM API ----------------
 
+def _audit(method: str, raw: bytes) -> None:
+    """Append one audit line per Telegram API call (for GitHub Actions debugging)."""
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gh_api_audit.log"), "a") as f:
+            f.write("%d|%s|%s\n" % (int(time.time()), method, raw[:300].decode(errors="replace").replace("\n", " ")))
+    except Exception:
+        pass
+
+
 def api(method: str, payload: dict, timeout: int = 30):
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/{method}"
     data = json.dumps(payload).encode()
@@ -140,8 +149,13 @@ def api(method: str, payload: dict, timeout: int = 30):
     )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
-            return json.loads(resp.read().decode())
+            raw = resp.read()
+            _audit(method, raw)
+            if not raw:
+                return {"ok": False, "description": f"empty body HTTP {resp.status}"}
+            return json.loads(raw.decode())
     except Exception as e:
+        _audit(method, b"ERROR: " + str(e).encode()[:300])
         return {"ok": False, "description": str(e)}
 
 
