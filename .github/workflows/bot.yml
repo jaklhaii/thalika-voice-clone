@@ -98,3 +98,11 @@ jobs:
           else
             echo "nothing to commit"
           fi
+
+      - name: Trigger bot to deliver voices
+        run: |
+          sleep 30
+          curl -s -X POST "https://api.github.com/repos/${{ github.repository }}/actions/workflows/bot.yml/dispatches" \
+            -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github+json" \
+            -d '{"ref":"main"}'
