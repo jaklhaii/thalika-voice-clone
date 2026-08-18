@@ -153,6 +153,9 @@ def main() -> int:
         try:
             run_job(model, p)
         except Exception as e:
+            import traceback as _tb
+
+            _tb.print_exc()
             job_id = os.path.basename(p)[:-5]
             print(f"[gh-worker] job {job_id} FAILED: {e}", flush=True)
             _mark_failed(job_id, f"generation error: {e}")
@@ -164,4 +167,13 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except Exception as e:
+        import traceback as _tb
+
+        _tb.print_exc()
+        print(f"[gh-worker] FATAL: {e}", flush=True)
+        sys.exit(1)
