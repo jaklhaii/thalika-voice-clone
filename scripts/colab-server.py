@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 
 import torch as _t; DEVICE = "cuda" if _t.cuda.is_available() else "cpu"; print("[km] torch cuda available:", _t.cuda.is_available(), flush=True)
@@ -65,6 +66,20 @@ class GenRequest(BaseModel):
     audio: str | None = None  # base64 reference audio
 
 
+_gen_state = {}  # job_id -> {"status": ..., "wav": bytes, "error": ...}
+_gen_lock = threading.Lock()  # noqa: E402  (fastapi thread may predate, define here)
+
+
+def _run_job(job_id, req, tmp_path):
+    try:
+        result = _do_generate(req, tmp_path)
+        with _gen_lock:
+            _gen_state[job_id] = {"status": "done", "result": result}
+    except Exception as e:
+        with _gen_lock:
+            _gen_state[job_id] = {"status": "error", "error": str(e)}
+
+
 @app.post("/generate")
 def generate(req: GenRequest):
     if not req.audio:
@@ -77,6 +92,36 @@ def generate(req: GenRequest):
     tmp.write(raw)
     tmp.close()
 
+    job_id = f"job{int(time.time()*1000)}"
+    with _gen_lock:
+        _gen_state[job_id] = {"status": "running"}
+    th = threading.Thread(target=_run_job, args=(job_id, req, tmp.name), daemon=True)
+    th.start()
+    return {"job_id": job_id}
+
+
+@app.get("/result/{job_id}")
+def result(job_id: str):
+    with _gen_lock:
+        st = _gen_state.get(job_id)
+    if st is None:
+        return {"error": "unknown job"}
+    if st["status"] == "running":
+        return {"status": "running"}
+    if st["status"] == "error":
+        return {"error": "generation failed: " + st.get("error", "")}
+    return st["result"]
+
+
+def generate_sync(req: GenRequest):  # kept for backward compat (used by old tests)
+    if not req.audio:
+        return {"error": "reference audio required"}
+    if not (req.text or "").strip():
+        return {"error": "text required"}
+    raw = base64.b64decode(req.audio)
+    tmp = tempfile.NamedTemporaryFile(suffix=".ref", delete=False)
+    tmp.write(raw)
+    tmp.close()
     try:
         return _do_generate(req, tmp.name)
     except Exception as e:

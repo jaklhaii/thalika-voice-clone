@@ -245,51 +245,83 @@ def _progress_bar(pct: int, width: int = 10) -> str:
     return "\u2588" * filled + "\u2591" * (width - filled)
 
 
+def _server_post(path: str, payload_bytes, timeout: int = 30):
+    """POST JSON to the server; return parsed dict."""
+    req = urllib.request.Request(
+        f"{SERVER_URL}{path}", data=payload_bytes, headers={"Content-Type": "application/json"}
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode())
+
+
+def _server_get(path: str, timeout: int = 30):
+    """GET from the server; return parsed dict."""
+    req = urllib.request.Request(f"{SERVER_URL}{path}")
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        return json.loads(resp.read().decode())
+
+
 def generate_voice(text: str, reference_b64: str, style: str = None, chat_id=None,
                    start_msg_id=None, timeout: int = 600):
-    """Call the Colab GPU server /generate endpoint with progress updates."""
+    """Call the Colab server (async job mode): POST /generate -> poll GET /result/<job_id> with progress."""
     payload = json.dumps({"text": text, "audio": reference_b64, "style": style}).encode()
-    url = f"{SERVER_URL}/generate"
-    req = urllib.request.Request(
-        url, data=payload, headers={"Content-Type": "application/json"}
-    )
     start = time.time()
-    pct = 0
-    last_pct = -1
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
-            while True:
-                time.sleep(1)
-                now = time.time()
-                # heuristic progress: estimate 150s total for a short text on T4;
-                # scale toward 90% while waiting, jump to 100 at completion
-                est = min(90, int((now - start) / 150.0 * 100)) if False else int(min(90, (now - start) / 6.0))
-                est = max(est, pct)
-                if est > pct and est - last_pct >= 10 and chat_id is not None:
-                    last_pct = est
-                    pct = est
-                    api("editMessageText", {
-                        "chat_id": chat_id,
-                        "message_id": start_msg_id,
-                        "text": f" Generating your cloned voice...\n[{_progress_bar(pct)}] {pct}%",
-                        "parse_mode": "HTML",
-                    })
-                if resp.fp is not None:
-                    if hasattr(resp.fp, "peek"):
-                        try:
-                            data = resp.fp.read()
-                            result = json.loads(data.decode())
-                            break
-                        except Exception as e:
-                            return None, f"Failed to read server response: {e}"
-                    else:
-                        data = resp.fp.read()
-                        result = json.loads(data.decode())
-                        break
+        job = _server_post("/generate", payload, timeout=30)
     except urllib.error.HTTPError as e:
         return None, f"Server error {e.code}: {e.read().decode(errors='replace')[:200]}"
     except Exception as e:
         return None, f"Connection error: {e}"
+    if isinstance(job, dict) and "error" in job:
+        return None, job.get("error", "Server error")
+    job_id = job.get("job_id") if isinstance(job, dict) else None
+    if not job_id:
+        # legacy sync response (audio embedded) handled as before
+        result = job
+        job_id = None
+    else:
+        result = None
+
+    pct = 0
+    last_pct = -1
+    last_update = 0
+    if not job_id:
+        return None, "Server did not return a job id"
+
+    while time.time() - start < timeout:
+        try:
+            st = _server_get(f"/result/{job_id}", timeout=15)
+        except Exception as e:
+            time.sleep(3)
+            continue
+        if not isinstance(st, dict):
+            time.sleep(3)
+            continue
+        if st.get("status") == "running":
+            # progress update every 10s (max 90%)
+            est = min(90, int((time.time() - start) / 8.0))
+            est = max(est, pct)
+            now = time.time()
+            if est - last_pct >= 10 and chat_id is not None and now - last_update > 8:
+                last_update = now
+                last_pct = est
+                pct = est
+                api("editMessageText", {
+                    "chat_id": chat_id,
+                    "message_id": start_msg_id,
+                    "text": f" Generating your cloned voice...\n[{_progress_bar(pct)}] {pct}%",
+                    "parse_mode": "HTML",
+                })
+            time.sleep(4)
+            continue
+        if "error" in st:
+            return None, st.get("error", "Generation failed")
+        if "audio" in st:
+            result = st
+            break
+        time.sleep(2)
+    else:
+        return None, "Generation timed out (server may be overloaded)"
 
     if not result.get("audio"):
         return None, result.get("error", "No audio returned from server")
