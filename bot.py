@@ -30,7 +30,7 @@ import urllib.request
 
 # ---------------- CONFIG ----------------
 BOT_TOKEN = "8924460807:AAENhVbQfpSGa_vgVkvH5PP3fUEDrrJBd7c"
-SERVER_URL = "https://karen-targets-hometown-knives.trycloudflare.com"  # Colab GPU server (changes each Colab session restart)
+SERVER_URL = "https://sally-dis-tune-indicated.trycloudflare.com"  # Colab GPU server (changes each Colab session restart)
 OWNER_ID = 8970380146
 
 BOT_NAME = "KM Voice Clone"
