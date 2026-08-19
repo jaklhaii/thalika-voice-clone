@@ -211,43 +211,46 @@ def send_message(chat_id, text: str, reply_markup=None, reply_to=None, parse="HT
     return api("sendMessage", payload)
 
 
-def kb_reply(rows):
-    """Buttons BELOW the message (ReplyKeyboardMarkup) — one-touch, stays under every message."""
-    keyboard = [[{"text": str(label)} for label in row] for row in rows]
-    return {"keyboard": keyboard, "resize_keyboard": True, "is_persistent": False}
+def _ikb(rows):
+    """InlineKeyboardMarkup — callback buttons attached below each message."""
+    return {"inline_keyboard": rows}
 
 
 def kb_reply_main():
-    return kb_reply([
-        ["🔊 အသံထုတ်မည်", "🎤 ကျွန်တော့်အသံများ"],
-        ["⚙️ ဆောင်ရွက်ချက်များ", "ဆက်သွယ်ရန် @Kmvclone"],
+    return _ikb([
+        [{"text": "🔊 အသံထုတ်မည်", "callback_data": "gen"}, {"text": "🎤 ကျွန်တော့်အသံများ", "callback_data": "voices"}],
+        [{"text": "⚙️ ဆောင်ရွက်ချက်များ", "callback_data": "admin"}, {"text": "ဆက်သွယ်ရန် @Kmvclone", "callback_data": "contact"}],
     ])
 
 
 def kb_reply_voices():
-    return kb_reply([["➕ အသံထည့်မည်", "📋 အသံစာရင်းကြည့်မည်"], ["◀️ မူလစာမျက်နှာ"]])
+    return _ikb([[{"text": "➕ အသံထည့်မည်", "callback_data": "voices_add"}, {"text": "📋 အသံစာရင်းကြည့်မည်", "callback_data": "voices_list"}], [{"text": "◀️ မူလစာမျက်နှာ", "callback_data": "main"}]])
 
 
 def kb_reply_generate(voices):
-    rows = [[f"🎙 {v[1]}" for v in voices]] if voices else []
-    rows.append(["◀️ မူလစာမျက်နှာ"])
-    return kb_reply(rows)
+    rows = [[{"text": f"🎙 {v[1]}", "callback_data": f"sel:{v[1]}"} for v in voices]] if voices else []
+    rows.append([{"text": "◀️ မူလစာမျက်နှာ", "callback_data": "main"}])
+    return _ikb(rows)
 
 
 def kb_reply_admin():
-    return kb_reply([["➕ အသုံးပြုသူထည့်မည်", "➖ အသုံးပြုသူဖယ်မည်"], ["📋 အသုံးပြုသူစာရင်း", "🖥 Server အခြေအနေ"], ["◀️ မူလစာမျက်နှာ"]])
+    return _ikb([
+        [{"text": "➕ အသုံးပြုသူထည့်မည်", "callback_data": "adduser"}, {"text": "➖ အသုံးပြုသူဖယ်မည်", "callback_data": "remuser"}],
+        [{"text": "📋 အသုံးပြုသူစာရင်း", "callback_data": "listusers"}, {"text": "🖥 Server အခြေအနေ", "callback_data": "server"}],
+        [{"text": "◀️ မူလစာမျက်နှာ", "callback_data": "main"}],
+    ])
 
 
 def kb_reply_remove(users):
-    rows = [[str(uid) for uid, _u, _t in users]] if users else []
-    rows.append(["◀️ နောက်ကျပြန်"])
-    return kb_reply(rows)
+    rows = [[{"text": str(uid), "callback_data": f"rem:{uid}"} for uid, _u, _t in users]] if users else []
+    rows.append([{"text": "◀️ နောက်ကျပြန်", "callback_data": "admin"}])
+    return _ikb(rows)
 
 
 def kb_reply_select_voice(voices):
-    rows = [[v[1] for v in voices]] if voices else []
-    rows.append(["❌ ပယ်ဖြက်မည်"])
-    return kb_reply(rows)
+    rows = [[{"text": v[1], "callback_data": f"sel:{v[1]}"} for v in voices]] if voices else []
+    rows.append([{"text": "❌ ပယ်ဖြက်မည်", "callback_data": "cancel"}])
+    return _ikb(rows)
 
 
 def send_voice(chat_id, wav_bytes: bytes, caption: str = None, reply_to=None):
@@ -805,7 +808,7 @@ def handle_message(update: dict):
                 return
             _state[chat_id] = {"step": "waiting_text", "voice_name": name}
             send_message(chat_id, f"✅ အသံ <b>{name}</b> ရွေးချဲ့ပြီးပါပြီ။\n\nယခု <b>အသံထုတ်ချင်တဲ့ စာသားကို ပို့ပေးပါ</b>:",
-                         reply_markup=kb_reply([["❌ ပယ်ဖြက်မည်"]]))
+                         reply_markup=_ikb([[{"text": "❌ ပယ်ဖြတ်မည်", "callback_data": "cancel"}]]))
             return
         return
 
@@ -887,6 +890,70 @@ def _run_mode():
     return os.environ.get("RUN_MODE", "persistent")
 
 
+
+def handle_callback_query(update: dict):
+    """Route inline button taps (callback_query) to the same button logic as plain text taps."""
+    cq = update.get("callback_query")
+    if not cq:
+        return
+    cid = cq["id"]
+    chat_id = cq["message"]["chat"]["id"]
+    uid = cq["from"]["id"]
+    data = (cq.get("data") or "").strip()
+
+    def answer(text=None):
+        api("answerCallbackQuery", {"callback_query_id": cid, "text": text} if text else {"callback_query_id": cid})
+
+    answer()
+    if not user_allowed(uid):
+        return
+
+    def as_message_button(txt):
+        # replay the tapped label through handle_message so all button logic is shared
+        upd = {"message": {"message_id": cq["message"]["message_id"],
+                           "from": cq["from"], "chat": cq["message"]["chat"],
+                           "date": cq.get("message", {}).get("date", 0), "text": txt}}
+        handle_message(upd)
+
+    if data == "gen":
+        as_message_button("🔊 အသံထုတ်မည်")
+    elif data == "voices":
+        as_message_button("🎤 ကျွန်တော့အသံများ")
+    elif data == "voices_add":
+        as_message_button("➕ အသံထည့်မည်")
+    elif data == "voices_list":
+        as_message_button("📋 အသံစာရင်းကြည့်မည်")
+    elif data == "admin":
+        as_message_button("⚙️ ဆောင်ရွက်ချက်များ")
+    elif data == "contact":
+        as_message_button("ဆက်သွယ်ရန် @Kmvclone")
+    elif data == "main":
+        as_message_button("◀️ မူလစာမျက်နှာ")
+    elif data == "cancel":
+        as_message_button("❌ ပယ်ဖြက်မည်")
+    elif data == "adduser":
+        as_message_button("➕ အသုံးပြုသူထည့်မည်")
+    elif data == "remuser":
+        as_message_button("➖ အသုံးပြုသူဖယ်မည်")
+    elif data == "listusers":
+        as_message_button("📋 အသုံးပြုသူစာရင်း")
+    elif data == "server":
+        as_message_button("🖥 Server အခြေအနေ")
+    elif data.startswith("sel:"):
+        name = data[4:]
+        as_message_button(f"🎙 {name}")
+    elif data.startswith("rem:"):
+        target = data[4:]
+        if target.isdigit() and uid == OWNER_ID:
+            remove_allowed(int(target))
+            send_message(chat_id, f"✅ သူ့အသုံးပြုသူ <code>{target}</code> ကို ဖယ်လိုက်ပါပြီ။", reply_markup=kb_reply_admin())
+            _state[chat_id] = {}
+        else:
+            send_message(chat_id, "⛔ ပိုင်ရှင်သီးသန့်ပါ။", reply_markup=kb_reply_main())
+    else:
+        return
+
+
 def run():
     if not BOT_TOKEN or BOT_TOKEN.startswith("PUT_"):
         print("ERROR: set BOT_TOKEN, SERVER_URL, OWNER_ID at the top of this file")
@@ -929,7 +996,10 @@ def run():
         for upd in updates:
             offset = max(offset, upd.get("update_id", 0) + 1)
             try:
-                handle_message(upd)
+                if upd.get("callback_query"):
+                    handle_callback_query(upd)
+                else:
+                    handle_message(upd)
             except Exception as e:
                 print(f"[{BOT_NAME}] handler error: {e}")
         if mode == "github":
