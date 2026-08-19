@@ -1,68 +1,45 @@
-# KM Voice Clone (@ckvoice_bot) — Setup & Usage Guide
+# KM Voice Clone (@ckvoice_bot) — Setup & Usage Guide (Colab ဗားရှင်း)
 
-## အနှစ်ချုပ်
+KM Voice Clone bot သည် Telegram တွင် သုံးသူတိုင်း၏ အသံ reference (voice sample) ကို သီးသန့်သိမ္းဆည်းပြီး ထိုအသံကိုပင် သုံးကာ စာသားမှ အသံ (voice clone) ထုတ်ပေးသော bot ဖြစ်သည်။ Bot နှင့် အသံထုတ် machine learning model (VoxCPM2) အားလုံး **Google Colab** တစ်နေရာတည်းတွင် run ပါသည် — Colab ၏ အခမဲ့ GPU ဖြင့် high-quality 48 kHz WAV ထုတ်ပေးသည်။
 
-KM Voice Clone bot သည် Telegram တွင် သုံးသူတစ်ဦးချင်းစီ၏ အသံ reference (voice sample) ကို သိမ်းဆည်းပြီး၊ ထိုအသံကိုပင် သုံး၍ စာသားမှ အသံ (TTS) ထုတ်ပေးသော bot ဖြစ်ပါသည်။ Code အားလုံး `bot.py` **တစ်ဖိုင်တည်း** တွင် ရေးထားပြီး pip install လုံးဝ မလိုပါ။
+## Bot run နည်း (Owner လုပ်ရမည့်အစ ပြင်ဆင်မှု)
 
-## Architecture
+`km_voice_clone_colab.ipynb` ကို Google Colab မှာ ဖွင့်ပါ ([colab.research.google.com](https://colab.research.google.com/) → File → Open notebook → Upload)။ Notebook တွင် **cell ၃ ခု** ရှိပြီး အောက်မှအထက် အစီအစဉ်လိုက် run ပါ။
 
-| အစိတ်အပိုင်း | နေရာ | ကုန်ကျစရိတ် |
+| Cell | တာဝန် | အချိန် |
 |---|---|---|
-| Telegram bot (`bot.py`) | GitHub Actions (free) | Free — ၂ မိနစ်တိုင်း အလိုအလျောက် run |
-| Voice cloning server (VoxCPM2) | Google Colab (free GPU/CPU) | Free |
-| Tunnel | Cloudflare Quick Tunnel | Free |
+| 1 | `voxcpm` library တပ်ဆင် + VoxCPM2 model (~9 GB) download | ပထမအကြိမ် ၅–၁၅ မိနစ် (ကြားတွင် **Connect** ကို နှိပ်ပါ၊ GPU ရရင် ပိုမြန်သည်) |
+| 2 | `bot.py` (bot ပရိုဂရမ်) ကို load ပါသည် | စက္ကန့်အနည်းငယ် |
+| 3 | Bot ကို စတင်ရန် (`run()`) — **ဒီ cell မပိတ်ပါနဲ့** | ချက်ချင်း |
 
-**GitHub repo:** [jaklhaii/thalika-voice-clone](https://github.com/jaklhaii/thalika-voice-clone)
+Cell 3 output တွင် `KM Voice Clone — starting... is listening` ပေါ်ရင် bot အသင့်ဖြစ်ပြီ။ **Colab tab ကို browser မှာ ဆက်ဖွင့်ထားပါ** — ပိတ်လိုက်ရင် bot ရပ်ပါမည်။ ရပ်သွားရင် cell 3 ကို ပြန် run ရုံဖြင့် ပြန်စနိုင်သည်။ Colab free plan တွင် ~၉၀ မိနစ် idle ဖြစ်လျှင် session ရပ်နိုင်သည်။
 
-## အဓိက Feature များ
+## အသုံးပြုနည်း (Telegram မှာ)
 
-- **ခလုတ်များ message အောက်မှာ** (ReplyKeyboardMarkup) — inline keyboard မဟုတ်
-- **အားလုံး မြန်မာဘာသာ** — bot message နှင့် ခလုတ် label အားလုံး
-- **Voice upload** — user က voice message ပို့လျှင် reference voice အဖြစ် သိမ်းပေး
-- **Reference မရှိလျှင် အသံမထုတ်** — စာသားသီးသန့်ပို့လျှင် bot က အသံ မထုတ် (warning ပြ)
-- **Per-user isolation** — သုံးသူတိုင်း၏ voice များ သီးခြားစီ သိမ်း (multi-user)
-- **Owner self-service** — owner (8970380146) သာ Settings → Allow/Remove users ခလုတ်များ မြင်ရ
-- **Progress bar** — `[█████░░░░░] 50%` format ဖြင့် generate အခြေအနေ ပြ
-- **@Kmvclone contact button** — main menu တွင် ထည့်ထား
-- **Job-mode generation** — Cloudflare timeout (60 စ) ကို ကျော်ဖြတ်ရာ job ID polling သုံးထား
+ခလုတ်အားလုံးက Telegram message **အောက်မှာ တွဲပါတဲ့ inline ခလုတ်များ** ဖြစ်ပြီး နှိပ်ရုံနဲ့ ချက်ချင်း တုန့်ပြန်ပါသည်။
 
-## Colab Server ကို ပြန် run နည်း (Owner ကိုယ်တိုင် ပြုလုပ်ရန်)
+| အဆင့် | လုပ်ရမည့်အရာ |
+|---|---|
+| ၁ | Bot ကို **/start** ပို့ပါ — မူလမီနူး ၂×၂ ခလုတ်များ ပေါ်လာမည် |
+| ၂ | **🎤 ကျွန်တော့အသံများ** → **➕ အသံထည့်မည်** နှိပ်ပြီး အသံအမည် ရေးပို့ပါ |
+| ၃ | **အသံ message (သို့) audio ဖိုင်** ပို့ပေးပါ — reference အဖြစ် သိမ်းမည် |
+| ၄ | **🔊 အသံထုတ်မည်** နှိပ် → မိမိအသံကို ရွေးပါ → **စာသားကို ပို့ပါ** |
+| ၅ | Progress bar `[▓▓▓░░] 40%` ပြပြီး စက္ကန့်အနည်းငယ် (စာသားအလိုက် ၁–၅ မိနစ်) 48 kHz WAV ပြန်ရမည် |
 
-Voice server သည် Colab free runtime တွင် run ထားရသည်။ Sandbox browser မှ runtime သည် memory ကန့်သတ်ချက်ကြောင့် ဆက်ကွပ်နေသောကြောင့် **သင့်ဖုန်း/ကွန်ပျူတာ browser မှ run ပေးရန် လိုအပ်ပါသည်** — တစ်ကြိမ် run လျှင် အောက်ပါအဆင့်များကို လုပ်ပေးရုံဖြစ်သည်။
+**သတိ** — စာသားသီးသန့်ပို့ရင် အသံ မထုတ်ပါ။ Reference အသံရှိမှသာ ထုတ်ပေးသည်။ Reference သည် ကိုယ့်အသံသာ သုံးသည် — **အခြားသူ့အသံများနဲ့ ရောစပါမည်**။
 
-1. Notebook ဖွင့်: https://colab.research.google.com/drive/1Jnk29QkHBAJI6pTi73AVohDVbUG4Z9vs
-2. **Connect** ခလုတ်နှိပ် → GPU quota ကုန်နေလျှင် pop-up ပေါ်လာသည့်အခါ **"Connect without GPU"** နှိပ် (GPU ရရင် Runtime → Change runtime type → T4 GPU သုံးလျှင် အသံထုတ်ချိန် ပိုမြန်သည်)
-3. Cell နှစ်ခုလုံးကို **Run** (cell ဘယ်ဘက် အောက်ပြောင်းခလုတ် သို့မဟုတ် Run all)
-4. Cell 1 output ပြီးလျှင် `PUBLIC_URL=https://......trycloudflare.com` စာကြောင်း ပေါ်လာမည် — **ထို URL ကို ကူပြီး bot owner (@Kmvclone) ထံ ပို့ပေးပါ**
-   - CPU mode ဖြစ်လျှင် cell 1 ပြီးရန် ~10-15 မိနစ် ကြာနိုင်သည် (pinned GPU ဆို ~5 မိနစ်)
-5. bot owner က URL ကို `bot.py` မှာ update လုပ်ပြီး GitHub တွင် commit ချလိုက်ရုံဖြင့် bot က အသစ် server နှင့် အလုပ်လုပ်မည်
+## Owner ထိန်းချုပ်မှု
 
-## Server URL ပြင်းနည်း (OWNER သာ ပြုလုပ်ရန်)
-
-Colab Quick Tunnel သည် restart တိုင်း URL ပြောင်းပါသည်။ Owner အနေဖြင့်:
-
-1. GitHub repo → `bot.py` → Edit (ပန်းခြစ် icon)
-2. Line ~33: `SERVER_URL = "https://.....trycloudflare.com"` ကို အသစ် PUBLIC_URL ဖြင့် ပြင်
-3. **Commit changes**
-4. Actions tab → "KM Voice Clone Bot" → **Run workflow** (သို့မဟုတ် ၂ မိနစ်အတွင်း auto-run ဖြစ်မည်)
-5. Telegram တွင် bot ကို /start နှိပ်ပြီး voice sample ပို့ခါ test လုပ်ပါ
-
-## GitHub Actions
-
-- Cron: `*/2 * * * *` (တစ်ခေါက် run လျှင် ~30 စက္ကန့်)
-- Manual: Actions → KM Voice Clone Bot → Run workflow
-- Free plan quota — workflow တစ်ခေါက် ~2 min; ၂၀၀၀ min/month free
-
-## တစ်ခေါက် run ထားလျှင် ဘယ်နှစ်နာရီ သက်တမ်းရှိလဲ
-
-- Colab free runtime သည် idle ~90 မိနစ်ကြာလျှင် အလိုအလျောက် ပိတ်သွားမည်
-- Bot run mode: job-mode polling ဖြစ်သောကြောင့် အသံ generate တစ်ခေါက် လျှင် CPU ဖြစ် 2-8 မိနစ်၊ GPU ဖြစ် 15-40 စက္ကန့် ကြာပါမည်
-- Runtime ပိတ်သွားလျှင် bot က "server မရသေးဘူး" ဟု အကြောင်းကြားပြ user ကို ထိခိုက်မှုမရှိစေပါ
+**⚙️ ဆောင်ရွက်ချက်များ** ခလုတ်က owner သာ မြင်ရပြီး — **➕ အသုံးပြုသူထည့်မည်** / **➖ အသုံးပြုသူဖယ်မည်** / **📋 အသုံးပြုသူစာရင်း** / **🖥 Server အခြေအနေ** — ဖြင့် ခွင့်ပြုစာရင်းကို စီမံခန့်ခွဲနိုင်သည်။ Owner ထည့်ထားမှသာ သုံးသူအသစ်များ bot ကို သုံးနိုင်သည်။ ဆက်သွယ်ချင်ရင် **ဆက်သွယ်ရန် @Kmvclone** ခလုတ်ကို သုံးပါ။
 
 ## ဖိုင်များ
 
 | ဖိုင် | တာဝန် |
 |---|---|
-| `bot.py` | Telegram bot (main, stdlib only, stdlib) — GitHub Actions တွင် run |
-| `.github/workflows/bot.yml` | GitHub Actions auto-run workflow |
-| `scripts/colab-server.py` | Colab voice server — notebook cell 1 ကို ထိုဖိုင်က GitHub မှ အလိုအလျောက် ဆွဲယူ run သည် |
+| `bot.py` | Telegram bot အလုံးစုံ (stdlib only — Colab မှာ ချက်ချင်း run နိုင်သည်) |
+| `km_voice_clone_colab.ipynb` | Colab notebook (cell 1 install/model, cell 2 bot, cell 3 run) |
+| `test_logic.py` | Logic test — `python3 test_logic.py` ဖြင့် 27/27 စစ်နိုင်သည် |
+
+## ပြင်ဆင်လိုပါက
+
+Owner အနေဖြင့် GitHub repo [`jaklhaii/thalika-voice-clone`](https://github.com/jaklhaii/thalika-voice-clone) ထဲက `bot.py` ကို online edit လုပ် commit ချပြီး notebook ကို Colab မှာ **Runtime → Restart and run all** ဖြင့် ပြန် run ရုံဖြင့် အသစ် update ဖြစ်သည်။ `OWNER_ID` နှင့် `TG_BOT_TOKEN` ကို `bot.py` ထိပ်တွင် သတ်မှတ်ထားသည်။
