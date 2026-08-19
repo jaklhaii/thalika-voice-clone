@@ -209,8 +209,9 @@ def api_file(method: str, files: dict, params: dict, timeout: int = 300):
 
 def send_message(chat_id, text: str, reply_markup=None, reply_to=None, parse="HTML"):
     payload = {"chat_id": chat_id, "text": text, "parse_mode": parse}
-    if reply_markup is not None:
-        payload["reply_markup"] = reply_markup
+    if reply_markup is None:
+        reply_markup = kb_reply_main()
+    payload["reply_markup"] = reply_markup
     if reply_to is not None:
         payload["reply_to_message_id"] = reply_to
     return api("sendMessage", payload)
