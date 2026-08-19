@@ -30,7 +30,7 @@ import urllib.parse
 import urllib.request
 
 # ---------------- CONFIG ----------------
-BOT_TOKEN = "8924460807:AAENhVbQfpSGa_vgVkvH5PP3fUEDrrJBd7c"
+BOT_TOKEN = "8924460807:AAGBGV2X6iQqj5P-pRayjKpm5r_tmM8a7jo"
 SERVER_URL = ""  # external voice server URL (empty => GitHub-only queue mode)
 OWNER_ID = 8970380146
 
