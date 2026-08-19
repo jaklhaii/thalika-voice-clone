@@ -38,9 +38,11 @@ def load_model():
     if MODEL is not None:
         return MODEL
     import torch  # noqa
+    torch.set_num_threads(4)  # limit CPU threads to reduce memory pressure
     from voxcpm import VoxCPM  # noqa
     print("[km-worker] downloading/loading VoxCPM2 (first run ~10-20 min)...", flush=True)
-    MODEL = VoxCPM.from_pretrained("openbmb/VoxCPM2", device="cpu")
+    MODEL = VoxCPM.from_pretrained("openbmb/VoxCPM2", device="cpu",
+                                   load_denoiser=False)  # denoiser needs extra RAM
     print("[km-worker] warming up...", flush=True)
     try:
         MODEL.generate(text="This is a warm-up test sentence.",
