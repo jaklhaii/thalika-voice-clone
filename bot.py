@@ -155,7 +155,12 @@ def api(method: str, payload: dict, timeout: int = 30):
                 return {"ok": False, "description": f"empty body HTTP {resp.status}"}
             return json.loads(raw.decode())
     except Exception as e:
-        _audit(method, b"ERROR: " + str(e).encode()[:300])
+        body = b""
+        try:
+            body = e.read()[:400]
+        except Exception:
+            pass
+        _audit(method, b"ERROR: " + body + b" | " + str(e).encode()[:120])
         return {"ok": False, "description": str(e)}
 
 
