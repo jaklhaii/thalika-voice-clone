@@ -902,7 +902,9 @@ def handle_callback_query(update: dict):
     data = (cq.get("data") or "").strip()
 
     def answer(text=None):
-        api("answerCallbackQuery", {"callback_query_id": cid, "text": text} if text else {"callback_query_id": cid})
+        r = api("answerCallbackQuery", {"callback_query_id": str(cid), "text": text} if text else {"callback_query_id": str(cid)})
+        if isinstance(r, dict) and not r.get("ok"):
+            print("[answerCallbackQuery failed]", r.get("description"))
 
     answer()
     if not user_allowed(uid):
