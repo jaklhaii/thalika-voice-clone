@@ -294,7 +294,10 @@ def _server_get(path: str, timeout: int = 30):
 
 def generate_voice(text: str, reference_b64: str, style: str = None, chat_id=None,
                    start_msg_id=None, timeout: int = 600):
-    """Call the Colab server (async job mode): POST /generate -> poll GET /result/<job_id> with progress."""
+    """Call the Colab server (async job mode) or generate locally if SERVER_URL is empty."""
+    if not SERVER_URL:
+        return generate_voice_local(text, reference_b64, chat_id=chat_id,
+                                    start_msg_id=start_msg_id, timeout=timeout)
     payload = json.dumps({"text": text, "audio": reference_b64, "style": style}).encode()
     start = time.time()
     try:
@@ -549,6 +552,8 @@ def deliver_queued_voices() -> int:
 
 
 def server_health(timeout: int = 10):
+    if not SERVER_URL:
+        return True  # local in-process mode: no external server needed
     try:
         url = f"{SERVER_URL}/health"
         req = urllib.request.Request(url)
@@ -556,6 +561,106 @@ def server_health(timeout: int = 10):
             return resp.status == 200
     except Exception:
         return False
+
+
+def _local_job_dir():
+    return "/tmp"
+
+
+def generate_voice_local(text: str, reference_b64: str, chat_id=None,
+                         start_msg_id=None, timeout: int = 900):
+    """Local in-process mode: run VoxCPM2 via local_gen_worker.py in sandbox.
+    Spawns worker subprocess, polls /tmp/kmgen_{job_id}.out.json with progress."""
+    import subprocess
+    import sys as _sys
+    job_id = f"{int(time.time() * 1000)}_{chat_id or 0}"
+    job_dir = _local_job_dir()
+    ref_path = os.path.join(job_dir, f"kmref_{job_id}.wav")
+    try:
+        raw = base64.b64decode(reference_b64)
+        with open(ref_path, "wb") as f:
+            f.write(raw)
+    except Exception as e:
+        return None, f"reference decode error: {e}"
+    job_path = os.path.join(job_dir, f"kmgen_{job_id}.json")
+    with open(job_path, "w") as f:
+        json.dump({"job_id": job_id, "text": text, "ref_wav": ref_path, "style": None}, f)
+    out_path = os.path.join(job_dir, f"kmgen_{job_id}.out.json")
+    # remove stale out file
+    if os.path.exists(out_path):
+        os.unlink(out_path)
+    worker = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts", "local_gen_worker.py")
+    try:
+        subprocess.Popen(
+            [_sys.executable, worker, job_id],
+            stdout=open(os.path.join(job_dir, f"kmgen_{job_id}.log"), "w"),
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    except Exception as e:
+        return None, f"worker launch error: {e}"
+    start = time.time()
+    last_pct = -1
+    loading_warned = False
+    while time.time() - start < timeout:
+        if not os.path.exists(out_path):
+            now = time.time()
+            if now - start > 30 and not loading_warned:
+                loading_warned = True
+                api("sendMessage", {
+                    "chat_id": chat_id,
+                    "text": "⏳ VoxCPM2 model (~9 GB) ကို ပထမအကြိမ် ဒေါင်လုဒ်လုပ်နေပါတယ — <b>၁၀–၂၀ မိနစ်</b> ကြာနိုင်ပါတယ်။ နောက်တစ်ခါကစ ပိုမြန်ပါမယ်။",
+                    "parse_mode": "HTML",
+                })
+            time.sleep(5)
+            continue
+        try:
+            with open(out_path) as f:
+                st = json.load(f)
+        except Exception:
+            time.sleep(3)
+            continue
+        status = st.get("status")
+        if status == "running":
+            pct = max(5, int(min(90, 5 + (time.time() - start) / 6.0)))
+            now = time.time()
+            if pct - last_pct >= 10 and chat_id is not None:
+                last_pct = pct
+                api("editMessageText", {
+                    "chat_id": chat_id,
+                    "message_id": start_msg_id,
+                    "text": f"🎙 Clone အသံ ထုတ်နေပါတယ...\n[{_progress_bar(pct)}] {pct}%",
+                    "parse_mode": "HTML",
+                })
+            time.sleep(5)
+            continue
+        if status == "error":
+            return None, st.get("error") or "worker error"
+        if status == "done" and st.get("audio"):
+            # final 100% update
+            if chat_id is not None:
+                api("editMessageText", {
+                    "chat_id": chat_id,
+                    "message_id": start_msg_id,
+                    "text": f"🎙 Clone အသံ ထုတ်နေပါတယ...\n[{_progress_bar(100)}] 100%",
+                    "parse_mode": "HTML",
+                })
+            try:
+                wav = base64.b64decode(st["audio"])
+            except Exception:
+                return None, "Failed to decode generated audio"
+            # cleanup
+            for p in (ref_path, job_path, out_path):
+                try:
+                    os.unlink(p)
+                except OSError:
+                    pass
+            return wav, None
+        time.sleep(3)
+    return None, "Generation timed out"
+
+
+# ---------------- KEYBOARDS (ReplyKeyboardMarkup — buttons below message) ----------------
 
 
 # ---------------- KEYBOARDS (ReplyKeyboardMarkup — buttons below message) ----------------
