@@ -884,7 +884,7 @@ def poll(offset: int, timeout: int = 30):
         open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "gh_poll_last.json"), "w").write(str(offset))
     except Exception:
         pass
-    return api("getUpdates", {"offset": offset, "timeout": timeout, "allowed_updates": ["message"]}, timeout=timeout + 10)
+    return api("getUpdates", {"offset": offset, "timeout": timeout, "allowed_updates": ["message", "callback_query"]}, timeout=timeout + 10)
 
 
 # ---------------- GITHUB ACTIONS MODE ----------------
